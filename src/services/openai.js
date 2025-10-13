@@ -322,8 +322,8 @@ export const setupOpenAIWebSocket = (fastify) => {
           : SYSTEM_MESSAGE +
             ". Please keep your responses concise and limit them to 4096 tokens.";
 
-        console.log("=================System Prompt=================");
-        console.log(systemPrompt.substring(0, 500) + "... (truncated)");
+        // console.log("=================System Prompt=================");
+        // console.log(systemPrompt.substring(0, 500) + "... (truncated)");
         
         const sessionUpdate = {
           type: "session.update",

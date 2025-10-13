@@ -19,20 +19,20 @@ export const restaurantDataCache = new Map();
  */
 export async function fetchRestaurantData(destinationNumber, callerNumber) {
   try {
-    console.log("=== Supabase DB Test Logic ===");
+    // console.log("=== Supabase DB Test Logic ===");
 
     // 1. Test getUserIdByPhone
     const userId = await getUserIdByPhone(destinationNumber);
-    console.log(`getUserIdByPhone("${destinationNumber}") =>`, userId);
+    // console.log(`getUserIdByPhone("${destinationNumber}") =>`, userId);
 
     // 2. Test getRestaurantsByUserId
     if (userId) {
       const effectiveUserId = userId;
       const restaurants = await getRestaurantsByUserId(effectiveUserId);
-      console.log(
-        `getRestaurantsByUserId("${effectiveUserId}") =>\n` +
-          JSON.stringify(restaurants, null, 2)
-      );
+      // console.log(
+      //   `getRestaurantsByUserId("${effectiveUserId}") =>\n` +
+      //     JSON.stringify(restaurants, null, 2)
+      // );
 
       // 3. Test getRestaurantLocationsByRestaurantId
       if (restaurants && restaurants.length > 0) {
@@ -42,10 +42,10 @@ export async function fetchRestaurantData(destinationNumber, callerNumber) {
           getRestaurantLocationsByRestaurantId(restaurantId),
           getMenuItemsByRestaurantId(restaurantId),
         ]);
-        console.log(
-          `getRestaurantLocationsByRestaurantId("${restaurantId}") =>`,
-          locations
-        );
+        // console.log(
+        //   `getRestaurantLocationsByRestaurantId("${restaurantId}") =>`,
+        //   locations
+        // );
 
         // Build and log full restaurantData used for system prompt
         let customerData = null;
@@ -67,7 +67,7 @@ export async function fetchRestaurantData(destinationNumber, callerNumber) {
           customerData,
         };
 
-        console.log("=== restaurantData for system prompt ===\n" + JSON.stringify(restaurantData, null, 2));
+        // console.log("=== restaurantData for system prompt ===\n" + JSON.stringify(restaurantData, null, 2));
         // console.log("---------------Generating system prompt-----------------");
         // console.log("generatedSystemPrompt: ", generateSystemPrompt(restaurantData));
         
@@ -110,18 +110,18 @@ export const setupTwilioRoutes = (fastify) => {
         callerNumber
       );
 
-      console.log(`[Twilio] Restaurant data fetched successfully:`, restaurantData ? 'Yes' : 'No');
+      // console.log(`[Twilio] Restaurant data fetched successfully:`, restaurantData ? 'Yes' : 'No');
 
       // Store restaurant data in server-side cache using CallSid as key
       // This avoids Twilio's parameter size limitations
       if (callSid) {
         restaurantDataCache.set(callSid, restaurantData);
-        console.log(`[Twilio] Cached restaurant data for CallSid: ${callSid}`);
+        // console.log(`[Twilio] Cached restaurant data for CallSid: ${callSid}`);
         
         // Auto-cleanup cache after 10 minutes to prevent memory leaks
         setTimeout(() => {
           restaurantDataCache.delete(callSid);
-          console.log(`[Twilio] Cleaned up cache for CallSid: ${callSid}`);
+          // console.log(`[Twilio] Cleaned up cache for CallSid: ${callSid}`);
         }, 10 * 60 * 1000);
       }
 
@@ -137,13 +137,13 @@ export const setupTwilioRoutes = (fastify) => {
               </Connect>
           </Response>`;
 
-      console.log(`[Twilio] Sending TwiML response`);
-      console.log(`[Twilio] WebSocket URL: wss://${request.headers.host}/media-stream`);
+      // console.log(`[Twilio] Sending TwiML response`);
+      // console.log(`[Twilio] WebSocket URL: wss://${request.headers.host}/media-stream`);
       
       reply.type("text/xml").send(twimlResponse);
     } catch (error) {
-      console.error(`[Twilio] Error handling incoming call:`, error);
-      console.error(`[Twilio] Error stack:`, error.stack);
+      // console.error(`[Twilio] Error handling incoming call:`, error);
+      // console.error(`[Twilio] Error stack:`, error.stack);
 
       // Fallback TwiML response in case of error
       const fallbackResponse = `<?xml version="1.0" encoding="UTF-8"?>
