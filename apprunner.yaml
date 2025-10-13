@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Twilio OpenAI Mediastream - AWS App Runner Service
+
+Parameters:
+  GitHubRepositoryURL:
+    Type: String
+    Description: The URL of the GitHub repository (e.g., https://github.com/my-org/my-repo).
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: The branch of the GitHub repository to deploy from.
+  OpenAIAPIKey:
+    Type: String
+    NoEcho: true
+    Description: Your OpenAI API Key.
+  TwilioAccountSid:
+    Type: String
+    NoEcho: true
+    Description: Your Twilio Account SID.
+  TwilioAuthToken:
+    Type: String
+    NoEcho: true
+    Description: Your Twilio Auth Token.
+  TwilioPhoneNumber:
+    Type: String
+    Description: Your Twilio Phone Number.
+  ManagerNumber:
+    Type: String
+    Description: The manager's phone number for call transfers and notifications.
+  MessagingServiceSid:
+    Type: String
+    Description: Your Twilio Messaging Service SID.
+  SupabaseUrl:
+    Type: String
+    Description: Your Supabase URL for database integration.
+  SupabaseKey:
+    Type: String
+    Description: Your Supabase Key for database integration.
+
+Resources:
+  AppRunnerServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: tasks.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AppRunnerAccessSecrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: "*" # Consider restricting this to specific secret ARNs in production
+        - PolicyName: AppRunnerServicePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - twilio:*
+                  - ses:SendEmail
+                  - sms:Publish
+                Resource: "*"
+
+  AppRunnerConnection:
+    Type: AWS::AppRunner::Connection
+    Properties:
+      ConnectionName: twilio-openai-mediastream
+      ProviderType: GITHUB
+
+  AppRunnerService:
+    Type: AWS::AppRunner::Service
+    Properties:
+      ServiceName: twilio-openai-mediastream-service
+      SourceConfiguration:
+        AuthenticationConfiguration:
+          ConnectionArn: !Ref AppRunnerConnection
+        CodeRepository:
+          RepositoryUrl: !Ref GitHubRepositoryURL
+          SourceCodeVersion:
+            Type: BRANCH
+            Value: !Ref GitHubBranch
+          CodeConfiguration:
+            ConfigurationSource: API # Or REPOSITORY to use apprunner.yaml from repo
+            Runtime: NODEJS_18
+            BuildCommand: 'npm install'
+            StartCommand: 'npm start'
+            Port: '5050'
+            RuntimeEnvironmentVariables:
+              OPENAI_API_KEY: !Ref OpenAIAPIKey
+              TWILIO_ACCOUNT_SID: !Ref TwilioAccountSid
+              TWILIO_AUTH_TOKEN: !Ref TwilioAuthToken
+              TWILIO_PHONE_NUMBER: !Ref TwilioPhoneNumber
+              MANAGER_NUMBER: !Ref ManagerNumber
+              MESSAGING_SERVICE_SID: !Ref MessagingServiceSid
+              SUPABASE_URL: !Ref SupabaseUrl
+              SUPABASE_KEY: !Ref SupabaseKey
+      InstanceConfiguration:
+        Cpu: '1024' # 1 vCPU
+        Memory: '2048' # 2 GB
+      HealthCheckConfiguration:
+        Path: "/health"
+        Protocol: HTTP
+        Interval: 10
+        Timeout: 5
+        HealthyThreshold: 1
+        UnhealthyThreshold: 5
+      NetworkConfiguration:
+        EgressConfiguration:
+          EgressType: Default # Allows outbound to public internet
+      AutoScalingConfigurationArn: !GetAtt AppRunnerAutoScalingConfiguration.Arn
+
+  AppRunnerAutoScalingConfiguration:
+    Type: AWS::AppRunner::AutoScalingConfiguration
+    Properties:
+      AutoScalingConfigurationName: twilio-openai-mediastream-autoscaling
+      MaxConcurrency: 100 # Adjust as needed
+      MaxSize: 25 # Adjust as needed
+      MinSize: 1 # Keep at least one instance warm for low latency
+
+Outputs:
+  AppRunnerServiceUrl:
+    Description: "The URL of the deployed AWS App Runner service"
+    Value: !GetAtt AppRunnerService.ServiceUrl
+  AppRunnerConnectionArn:
+    Description: "The ARN of the App Runner Connection to GitHub"
+    Value: !GetAtt AppRunnerConnection.Arn
