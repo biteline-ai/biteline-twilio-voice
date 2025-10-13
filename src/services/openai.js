@@ -15,6 +15,8 @@ import {
 } from "../utils/utils.js";
 // Import functionTools from functionDeclarations.js
 import { functionTools } from "../utils/functionDeclarations.js";
+// Import restaurant data cache from twilio service
+import { restaurantDataCache } from "./twilio.js";
 
 
 /**
@@ -310,6 +312,8 @@ export const setupOpenAIWebSocket = (fastify) => {
       });
 
       const initializeSession = () => {
+        console.log("[WebSocket] ===== INITIALIZING SESSION =====");
+        
         // Generate dynamic system prompt if restaurant data is available
         const systemPrompt = restaurantData
           ? generateSystemPrompt(restaurantData) +
@@ -317,7 +321,9 @@ export const setupOpenAIWebSocket = (fastify) => {
           : SYSTEM_MESSAGE +
             ". Please keep your responses concise and limit them to 4096 tokens.";
 
-        console.log("=================System Prompt=================", systemPrompt);
+        console.log("=================System Prompt=================");
+        console.log(systemPrompt.substring(0, 500) + "... (truncated)");
+        
         const sessionUpdate = {
           type: "session.update",
           session: {
@@ -334,7 +340,9 @@ export const setupOpenAIWebSocket = (fastify) => {
         };
 
         if (openAiWs.readyState === WebSocket.OPEN) {
+          console.log("[WebSocket] Sending session.update to OpenAI");
           openAiWs.send(JSON.stringify(sessionUpdate));
+          console.log("[WebSocket] Sending initial conversation item");
           sendInitialConversationItem();
         } else {
           console.warn("[WebSocket] Cannot initialize session: WebSocket not open (state:", openAiWs.readyState, ")");
@@ -346,14 +354,14 @@ export const setupOpenAIWebSocket = (fastify) => {
         // Generate dynamic greeting based on restaurant data
         const greeting = restaurantData
           ? `Greet the user with "${
-              restaurantData.customerData.customer_name
+              restaurantData.customerData?.customer_name
                 ? `Hello ${
                     restaurantData.customerData.customer_name
                   }! Thank you for calling ${
-                    restaurantData.restaurant.name || "our restaurant"
+                    restaurantData.restaurant?.name || "our restaurant"
                   }, I am your friendly virtual assistant here to take your order or to answer your questions. If at any point you would like to speak with our manager, simply press 0 or say connect me to the manager. I see you're a returning customer!`
                 : `Hello there! Thank you for calling ${
-                    restaurantData.restaurant.name || "our restaurant"
+                    restaurantData.restaurant?.name || "our restaurant"
                   }, I am your friendly virtual assistant here to take your order or to answer your questions. If at any point you would like to speak with our manager, simply press 0 or say connect me to the manager. Could I get your name, please?`
             }"`
           : 'Greet the user with "Hello there! Thank you for calling Tutti Da Gio, I am your friendly virtual assistant here to take your order or to answer your questions. If at any point you would like to speak with our manager, simply press 0 or say connect me to the manager. Could I get your name, please?"';
@@ -672,23 +680,16 @@ export const setupOpenAIWebSocket = (fastify) => {
               latestMediaTimestamp = 0;
               callStartTime = Date.now(); // Record call start time
 
-              // Extract restaurant data from parameters
+              // Retrieve restaurant data from server-side cache using CallSid
               try {
-                const restaurantDataParam =
-                  data.start.customParameters.restaurantData;
+                console.log(`[WebSocket] Looking up restaurant data for CallSid: ${callSid}`);
                 
-                // Try to parse if it's a string, otherwise use directly
-                if (restaurantDataParam) {
-                  try {
-                    restaurantData = typeof restaurantDataParam === 'string' 
-                      ? JSON.parse(restaurantDataParam) 
-                      : restaurantDataParam;
-                  } catch (parseError) {
-                    console.error("[WebSocket] Error parsing restaurant data, using SampleRestaurantData:", parseError);
-                    restaurantData = SampleRestaurantData;
-                  }
-                  
-                  console.log("[WebSocket] Restaurant data loaded:", {
+                // First try to get from cache
+                const cachedData = restaurantDataCache.get(callSid);
+                
+                if (cachedData) {
+                  restaurantData = cachedData;
+                  console.log("[WebSocket] Restaurant data loaded from cache:", {
                     restaurantName: restaurantData.restaurant?.restaurant_name,
                     locationsCount: restaurantData.locations?.length,
                     menuCategoriesCount: restaurantData.menuItems?.length,
@@ -696,13 +697,13 @@ export const setupOpenAIWebSocket = (fastify) => {
                   });
                 } else {
                   console.log(
-                    "[WebSocket] No restaurant data provided, using SampleRestaurantData"
+                    "[WebSocket] No restaurant data in cache, using SampleRestaurantData"
                   );
                   restaurantData = SampleRestaurantData;
                 }
               } catch (error) {
                 console.error(
-                  "[WebSocket] Error handling restaurant data, using SampleRestaurantData:",
+                  "[WebSocket] Error retrieving restaurant data from cache, using SampleRestaurantData:",
                   error
                 );
                 restaurantData = SampleRestaurantData;
@@ -711,7 +712,10 @@ export const setupOpenAIWebSocket = (fastify) => {
               pendingOrders = await getTodayOrdersByPhone(callerNumber);
 
               // Initialize session with restaurant data
+              console.log(`[WebSocket] OpenAI WebSocket state: ${openAiWs.readyState} (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)`);
+              
               if (openAiWs.readyState === WebSocket.OPEN) {
+                console.log(`[WebSocket] OpenAI is ready, initializing session in 100ms`);
                 setTimeout(() => {
                   initializeSession();
                   // Send previous order context after session is initialized
@@ -719,6 +723,22 @@ export const setupOpenAIWebSocket = (fastify) => {
                     sendPreviousOrderContext(pendingOrders);
                   }, 200);
                 }, 100);
+              } else {
+                console.log(`[WebSocket] OpenAI not ready yet, will initialize when connection opens`);
+                // Wait for OpenAI WebSocket to open, then initialize
+                const initWhenReady = () => {
+                  if (openAiWs.readyState === WebSocket.OPEN) {
+                    console.log(`[WebSocket] OpenAI now ready, initializing session`);
+                    initializeSession();
+                    setTimeout(() => {
+                      sendPreviousOrderContext(pendingOrders);
+                    }, 200);
+                  } else {
+                    console.log(`[WebSocket] Still waiting for OpenAI... (state: ${openAiWs.readyState})`);
+                    setTimeout(initWhenReady, 100);
+                  }
+                };
+                setTimeout(initWhenReady, 100);
               }
               break;
             case "mark":
