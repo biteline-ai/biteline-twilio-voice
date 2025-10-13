@@ -275,6 +275,7 @@ export const setupOpenAIWebSocket = (fastify) => {
       let callStartTime = null;
       let hasSentInitialGreeting = false;
       let callStatusRecorded = false;
+      let functionCallBuffer = new Map(); // Buffer for incomplete function call arguments
 
       // Helper function to record call completion
       const recordCallEnd = async (status) => {
@@ -505,20 +506,58 @@ export const setupOpenAIWebSocket = (fastify) => {
             console.log("🔧 Function name:", functionName);
           }
 
+          // Handle function call arguments that might come in chunks
+          if (response.type === "response.function_call_arguments.delta") {
+            const callId = response.id;
+            if (!functionCallBuffer.has(callId)) {
+              functionCallBuffer.set(callId, "");
+            }
+            functionCallBuffer.set(callId, functionCallBuffer.get(callId) + (response.delta || ""));
+          }
+
           if (response.type === "response.function_call_arguments.done") {
             // console.log("✅ RESPONSE FUNCTION CALL DONE - ID:", response.id);
             console.log(
               "✅ RESPONSE FUNCTION CALL DONE - NAME:",
               response.name
             );
+
+            // Get the complete arguments (either from buffer or direct)
+            const callId = response.id;
+            let completeArguments = response.arguments;
+            
+            // If we have buffered data, use it
+            if (functionCallBuffer.has(callId)) {
+              completeArguments = functionCallBuffer.get(callId);
+              functionCallBuffer.delete(callId); // Clean up buffer
+              console.log("🔍 Using buffered arguments for call ID:", callId);
+            }
+            
             console.log(
               "✅ RESPONSE FUNCTION CALL DONE - ARGUMENTS:",
-              response.arguments
+              completeArguments
             );
 
             let args = {};
             try {
-              args = JSON.parse(response.arguments);
+              // Log the raw arguments to debug JSON issues
+              console.log("🔍 Raw arguments string:", JSON.stringify(completeArguments));
+              console.log("🔍 Arguments length:", completeArguments?.length);
+              
+              // Validate arguments before parsing
+              if (!completeArguments || typeof completeArguments !== 'string') {
+                console.error("❌ Invalid arguments format:", typeof completeArguments);
+                throw new Error("Arguments is not a string");
+              }
+              
+              // Check for incomplete JSON (common issue with streaming)
+              const trimmedArgs = completeArguments.trim();
+              if (!trimmedArgs.startsWith('{') || !trimmedArgs.endsWith('}')) {
+                console.error("❌ Incomplete JSON detected:", trimmedArgs);
+                throw new Error("Incomplete JSON arguments");
+              }
+              
+              args = JSON.parse(trimmedArgs);
               // Handle the function call based on the function name
               switch (response.name) {
                 case "location_sms":
@@ -635,7 +674,22 @@ export const setupOpenAIWebSocket = (fastify) => {
                   console.log("❓ Unknown function call:", response.name);
               }
             } catch (e) {
-              console.log(e);
+              console.error("❌ Error parsing function call arguments:", e.message);
+              console.error("❌ Raw arguments that failed:", response.arguments);
+              
+              // For handle_finish, we can't proceed without valid arguments
+              if (response.name === "handle_finish") {
+                console.error("❌ Cannot handle finish without valid order data");
+                // Record call as failed since we can't complete the order
+                await recordCallEnd("failed");
+                setTimeout(() => {
+                  endCall(connection);
+                }, 3000);
+                return;
+              }
+              
+              // For other functions, we might be able to continue
+              console.error("❌ Skipping function call due to parsing error");
             }
             // After handling a function call, prompt the model to continue its turn
             try {
@@ -763,6 +817,9 @@ export const setupOpenAIWebSocket = (fastify) => {
       });
 
       connection.on("close", async () => {
+        // Clean up function call buffer
+        functionCallBuffer.clear();
+        
         // Record call as failed if it ended without completion
         if (callStartTime) {
           await recordCallEnd("failed");
