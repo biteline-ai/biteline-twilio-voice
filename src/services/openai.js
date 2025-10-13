@@ -674,11 +674,20 @@ export const setupOpenAIWebSocket = (fastify) => {
 
               // Extract restaurant data from parameters
               try {
-                // const restaurantDataParam =
-                //   data.start.customParameters.restaurantData;
-                const restaurantDataParam = SampleRestaurantData;
+                const restaurantDataParam =
+                  data.start.customParameters.restaurantData;
+                
+                // Try to parse if it's a string, otherwise use directly
                 if (restaurantDataParam) {
-                  restaurantData = restaurantDataParam;
+                  try {
+                    restaurantData = typeof restaurantDataParam === 'string' 
+                      ? JSON.parse(restaurantDataParam) 
+                      : restaurantDataParam;
+                  } catch (parseError) {
+                    console.error("[WebSocket] Error parsing restaurant data, using SampleRestaurantData:", parseError);
+                    restaurantData = SampleRestaurantData;
+                  }
+                  
                   console.log("[WebSocket] Restaurant data loaded:", {
                     restaurantName: restaurantData.restaurant?.restaurant_name,
                     locationsCount: restaurantData.locations?.length,
@@ -687,15 +696,16 @@ export const setupOpenAIWebSocket = (fastify) => {
                   });
                 } else {
                   console.log(
-                    "[WebSocket] No restaurant data provided, using default system prompt"
+                    "[WebSocket] No restaurant data provided, using SampleRestaurantData"
                   );
+                  restaurantData = SampleRestaurantData;
                 }
               } catch (error) {
                 console.error(
-                  "[WebSocket] Error parsing restaurant data:",
+                  "[WebSocket] Error handling restaurant data, using SampleRestaurantData:",
                   error
                 );
-                restaurantData = null;
+                restaurantData = SampleRestaurantData;
               }
 
               pendingOrders = await getTodayOrdersByPhone(callerNumber);
