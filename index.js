@@ -26,6 +26,10 @@ setupOpenAIWebSocket(fastify);
 
 // Start the server
 const PORT = process.env.PORT || 5050;
+fastify.get("/", (req, res) => {
+  res.send("Hello World");
+});
+
 fastify.listen({ port: PORT, host: "0.0.0.0" }, async (err) => {
   if (err) {
     console.error(err);
