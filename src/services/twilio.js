@@ -66,15 +66,21 @@ export async function fetchRestaurantData(destinationNumber, callerNumber) {
         console.log("=== restaurantData for system prompt ===\n" + JSON.stringify(restaurantData, null, 2));
         console.log("---------------Generating system prompt-----------------");
         console.log("generatedSystemPrompt: ", generateSystemPrompt(restaurantData));
+        
+        // Return the restaurant data
+        return restaurantData;
       } else {
         console.log("No restaurants found to test locations.");
+        return null;
       }
     }
     else {
       console.log("No userId found to test getRestaurantsByUserId.");
+      return null;
     }
   } catch (err) {
     console.error("Error during Supabase DB test logic:", err);
+    return null;
   }
 }
 
