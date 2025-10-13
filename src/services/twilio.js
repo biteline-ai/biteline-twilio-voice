@@ -13,7 +13,7 @@ import { generateSystemPrompt } from "./openai.js";
  * @param {string} callerNumber - The caller's phone number
  * @returns {Promise<Object>} - Complete restaurant data object
  */
-export async function fetchRestaurantData(destinationNumber, callerNumber) {
+async function fetchRestaurantData(destinationNumber, callerNumber) {
   try {
     console.log("=== Supabase DB Test Logic ===");
 

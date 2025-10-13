@@ -5,11 +5,6 @@ import fastifyWs from "@fastify/websocket";
 import fastifyMultipart from "@fastify/multipart";
 import { setupTwilioRoutes } from "./src/services/twilio.js";
 import { setupOpenAIWebSocket} from "./src/services/openai.js";
-import {fetchRestaurantData} from "./src/services/twilio.js";
-
-// Example test values
-const testPhone = process.env.TEST_PHONE || "+13614705787"; // Set a test phone in your .env
-const testCallerPhone = process.env.TEST_CALLER_PHONE || "+12104050222";
 
 // Load environment variables from .env file
 dotenv.config();
@@ -112,5 +107,4 @@ fastify.listen({ port: PORT, host: "0.0.0.0" }, async (err) => {
   //     console.error("Error during Supabase DB test logic:", err);
   //   }
   // })();
-  console.log("restaurant Data: ", fetchRestaurantData(testPhone, testCallerPhone))
 });
