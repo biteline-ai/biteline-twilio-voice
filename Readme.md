@@ -29,8 +29,8 @@ A real-time voice assistant application that enables two-way conversations betwe
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/TalentDev402/twilio-openai-mediastream.git
-   cd twilio-openai-mediastream
+   git clone https://github.com/biteline-ai/biteline-twilio-voice.git
+   cd biteline-twilio-voice
    ```
 
 2. Install dependencies:
