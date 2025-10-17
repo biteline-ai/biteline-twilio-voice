@@ -65,7 +65,38 @@ A real-time voice assistant application that enables two-way conversations betwe
    npm start
    ```
 
-3. Set up ngrok for local development:
+3. **PM2 Process Management (Recommended for Production):**
+
+   Install PM2 globally:
+   ```bash
+   npm install -g pm2
+   ```
+
+   Start with PM2 (development with auto-restart):
+   ```bash
+   npm run pm2:start:dev
+   ```
+
+   Start with PM2 (production):
+   ```bash
+   npm run pm2:start:prod
+   ```
+
+   Monitor your application:
+   ```bash
+   npm run pm2:status    # Check status
+   npm run pm2:logs:dev  # View logs
+   npm run pm2:monit     # Real-time monitoring
+   ```
+
+   Stop the application:
+   ```bash
+   npm run pm2:stop:dev  # Stop development
+   npm run pm2:stop:prod # Stop production
+   npm run pm2:stop      # Stop all
+   ```
+
+4. Set up ngrok for local development:
 
    ```bash
    ngrok http 5050
@@ -73,7 +104,7 @@ A real-time voice assistant application that enables two-way conversations betwe
 
    Copy the generated ngrok URL (e.g., `https://[your-ngrok-subdomain].ngrok.app`).
 
-4. Configure your Twilio phone number:
+5. Configure your Twilio phone number:
    - Go to [Twilio Console](https://console.twilio.com/)
    - Navigate to Phone Numbers > Manage > Active Numbers
    - Select your phone number
@@ -86,13 +117,20 @@ A real-time voice assistant application that enables two-way conversations betwe
 ```plaintext
 .
 ├── src/
-│   ├── config/         # Configuration and environment setup
 │   ├── services/       # Core service implementations
-│   ├── middleware/     # Request/response middleware
+│   │   ├── openai.js   # OpenAI Realtime API integration
+│   │   ├── twilio.js   # Twilio Voice and Media Streams
+│   │   └── whisper.js  # Audio processing utilities
 │   ├── utils/          # Utility functions and helpers
+│   │   ├── constants.js
+│   │   ├── functionDeclarations.js
+│   │   └── utils.js
 │   └── db/            # Database models and operations
+│       └── supabase.js
 ├── index.js           # Application entry point
+├── ecosystem.config.cjs # PM2 process management configuration
 ├── package.json       # Project dependencies and scripts
+├── logs/             # PM2 log files (auto-created)
 └── .env              # Environment variables (create from .env.example)
 ```
 d
@@ -118,16 +156,76 @@ d
 
 ## Usage
 
-1. Start the application using either:
+1. Start the application using one of these methods:
+
+   **Development with hot reload:**
    ```bash
-   npm run dev  # For development with hot reload
-   npm start    # For production
+   npm run dev
+   ```
+
+   **Production:**
+   ```bash
+   npm start
+   ```
+
+   **PM2 Process Management (Recommended):**
+   ```bash
+   # Development with auto-restart on file changes
+   npm run pm2:start:dev
+   
+   # Production with process management
+   npm run pm2:start:prod
    ```
 
 2. Call your Twilio phone number
 3. The AI assistant will greet you and begin the conversation
 4. Speak naturally to interact with the assistant
 5. End the call when finished
+
+## PM2 Process Management
+
+This project includes PM2 configuration for robust process management:
+
+### Features:
+- **Auto-restart on file changes** (development mode)
+- **Process monitoring** and crash recovery
+- **Log management** with rotation
+- **Memory monitoring** with auto-restart
+- **Separate dev/prod environments**
+
+### Available Commands:
+```bash
+# Start applications
+npm run pm2:start:dev   # Development with file watching
+npm run pm2:start:prod  # Production mode
+
+# Monitor applications
+npm run pm2:status      # Check status
+npm run pm2:logs:dev    # View development logs
+npm run pm2:logs:prod   # View production logs
+npm run pm2:monit       # Real-time monitoring dashboard
+
+# Control applications
+npm run pm2:restart:dev # Restart development
+npm run pm2:restart:prod# Restart production
+npm run pm2:stop:dev    # Stop development
+npm run pm2:stop:prod    # Stop production
+npm run pm2:stop         # Stop all processes
+npm run pm2:delete:dev   # Delete development process
+npm run pm2:delete:prod  # Delete production process
+npm run pm2:flush        # Clear all logs
+```
+
+### Auto-start on System Boot:
+```bash
+# Save current PM2 processes
+pm2 save
+
+# Generate startup script
+pm2 startup
+
+# Follow the instructions that appear
+```
 
 ## Contributing
 
