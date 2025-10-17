@@ -149,10 +149,13 @@ d
 
 - **Utilities:**
   - dotenv v16.4.5 - Environment configuration
-  - fluent-ffmpeg v2.1.3 - Audio processing
   - moment-timezone v0.5.47 - Time handling
   - ws v8.18.0 - WebSocket client
   - nodemon v3.1.9 - Development server
+
+- **Process Management:**
+  - PM2 - Advanced process manager for Node.js applications
+  - ecosystem.config.cjs - PM2 configuration for dev/prod environments
 
 ## Usage
 
