@@ -5,7 +5,12 @@ import {
   getMenuItemsByRestaurantId,
   getCustomerNameByUserIdAndPhone,
 } from "../db/supabase.js";
+import twilio from "twilio";
+import dotenv from "dotenv";
+import { sanitizeCallLog } from "../utils/logSanitizer.js";
 // import { generateSystemPrompt } from "./openai.js";
+
+dotenv.config();
 
 // In-memory cache for restaurant data to avoid passing large data via Twilio parameters
 // Key: callSid, Value: restaurantData
@@ -96,13 +101,33 @@ export const setupTwilioRoutes = (fastify) => {
   // Route for Twilio to handle incoming calls
   fastify.all("/incoming-call", async (request, reply) => {
     try {
+      // SECURITY: Validate Twilio signature to prevent unauthorized requests
+      const authToken = process.env.TWILIO_AUTH_TOKEN;
+      const twilioSignature = request.headers['x-twilio-signature'];
+
+      // Build the full URL (protocol + host + path)
+      const protocol = request.headers['x-forwarded-proto'] || 'https';
+      const url = `${protocol}://${request.headers.host}${request.url}`;
+
+      // Validate the request signature
+      const isValid = twilio.validateRequest(
+        authToken,
+        twilioSignature,
+        url,
+        request.body
+      );
+
+      if (!isValid) {
+        console.error(`[Twilio] Invalid signature detected from ${request.ip}`);
+        return reply.code(403).send('Forbidden - Invalid Twilio signature');
+      }
+
       const callerNumber = request.body.From;
       const destinationNumber = request.body.To;
       const callSid = request.body.CallSid;
-      
-      console.log(
-        `[Twilio] Incoming call from: ${callerNumber} to: ${destinationNumber}, CallSid: ${callSid}`
-      );
+
+      // SECURITY: Use sanitized logging to protect PII
+      console.log(`[Twilio] ${sanitizeCallLog(callerNumber, destinationNumber, callSid)}`);
 
       // Fetch complete restaurant data for system prompt generation
       const restaurantData = await fetchRestaurantData(

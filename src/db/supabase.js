@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import moment from "moment-timezone";
+import { maskPhoneNumber, maskCustomerName } from "../utils/logSanitizer.js";
 
 // Load environment variables
 dotenv.config();
@@ -195,7 +196,7 @@ export async function getTodayOrdersByPhone(
   timezone = "America/Chicago"
 ) {
   try {
-    console.log(phone);
+    console.log(`[Supabase] Fetching orders for phone: ${maskPhoneNumber(phone)}`);
     const startOfDay = moment
       .tz(timezone)
       .startOf("day")
@@ -204,7 +205,7 @@ export async function getTodayOrdersByPhone(
       .tz(timezone)
       .endOf("day")
       .format("YYYY-MM-DDT23:59:59.999[Z]");
-    console.log(startOfDay, endOfDay);
+    console.log(`[Supabase] Date range: ${startOfDay} to ${endOfDay}`);
     const { data, error } = await supabase
       .from("orders")
       .select("*")
@@ -243,7 +244,7 @@ export async function getUserIdByPhone(phone) {
     if (error) {
       if (error.code === "PGRST116") {
         // No rows found
-        console.log(`[Supabase] No user found for phone: ${phone}`);
+        console.log(`[Supabase] No user found for phone: ${maskPhoneNumber(phone)}`);
         return null;
       }
       console.error(

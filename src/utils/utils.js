@@ -7,6 +7,7 @@ import {
 } from "../db/supabase.js";
 import twilio from "twilio";
 import dotenv from "dotenv";
+import { sanitizeCustomerLog, maskPhoneNumber } from "./logSanitizer.js";
 
 dotenv.config();
 
@@ -211,15 +212,16 @@ Total Price: $${order.total_amount}`;
  */
 export async function getCallerName(callerName, callerPhone, userId) {
   try {
+    // SECURITY: Use sanitized logging to protect PII
     console.log(
-      `[Utils] Processing caller name: ${callerName} for phone: ${callerPhone}`
+      `[Utils] Processing caller: ${sanitizeCustomerLog(callerName, callerPhone)}`
     );
 
     // Add new customer (function will check if exists first)
     const customer = await addNewCustomer(userId, callerPhone, callerName);
 
     console.log(
-      `[Utils] Customer processed successfully: ${customer.customer_name} (ID: ${customer.id})`
+      `[Utils] Customer processed successfully (ID: ${customer.id})`
     );
     return customer;
   } catch (error) {
@@ -244,8 +246,9 @@ export async function recordCallCompletion(
   status
 ) {
   try {
+    // SECURITY: Use sanitized logging to protect PII
     console.log(
-      `[Utils] Recording call completion: ${status} (${duration}s) for ${phone}`
+      `[Utils] Recording call completion: ${status} (${duration}s) for ${maskPhoneNumber(phone)}`
     );
     await addCallRecord(userId, customerId, phone, duration, status);
   } catch (error) {

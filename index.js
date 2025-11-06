@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import fastifyFormBody from "@fastify/formbody";
 import fastifyWs from "@fastify/websocket";
 import fastifyMultipart from "@fastify/multipart";
+import fastifyRateLimit from "@fastify/rate-limit";
 import { setupTwilioRoutes } from "./src/services/twilio.js";
 import { setupOpenAIWebSocket} from "./src/services/openai.js";
 
@@ -18,6 +19,32 @@ const fastify = Fastify({
 fastify.register(fastifyFormBody);
 fastify.register(fastifyWs);
 fastify.register(fastifyMultipart);
+
+// Register rate limiting - protects against DoS attacks and abuse
+fastify.register(fastifyRateLimit, {
+  max: 100, // Maximum 100 requests
+  timeWindow: '1 minute', // Per minute per IP
+  ban: 5, // Ban for 5 minutes after exceeding limit
+  cache: 10000, // Keep track of 10k IPs
+  allowList: (req) => {
+    // Allow requests from Twilio (based on signature validation)
+    // This is handled in the route itself
+    return false;
+  },
+  skipOnError: true, // Don't rate limit if there's an error checking
+  keyGenerator: (request) => {
+    // Use IP address as key
+    return request.ip || request.headers['x-forwarded-for'] || 'unknown';
+  },
+  errorResponseBuilder: (request, context) => {
+    return {
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: `Rate limit exceeded. Try again in ${Math.ceil(context.after / 1000)} seconds.`,
+      expiresIn: Math.ceil(context.after / 1000)
+    };
+  }
+});
 
 // Setup Twilio routes
 setupTwilioRoutes(fastify);

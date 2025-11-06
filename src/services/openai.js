@@ -17,6 +17,8 @@ import {
 import { functionTools } from "../utils/functionDeclarations.js";
 // Import restaurant data cache from twilio service
 import { restaurantDataCache } from "./twilio.js";
+// Import log sanitization
+import { sanitizeFunctionArgs } from "../utils/logSanitizer.js";
 
 
 /**
@@ -283,16 +285,24 @@ export const setupOpenAIWebSocket = (fastify) => {
           console.log(`[Utils] Call status already recorded, skipping duplicate: ${status}`);
           return;
         }
+        // CRITICAL: Set flag BEFORE async operation to prevent race condition
+        // Multiple code paths can call this function, so we need to prevent duplicates
+        callStatusRecorded = true;
+
         if (callStartTime && restaurantData && restaurantData.userId) {
           const duration = Math.floor((Date.now() - callStartTime) / 1000); // Duration in seconds
-          await recordCallCompletion(
-            restaurantData.userId,
-            customerId,
-            callerNumber,
-            duration,
-            status
-          );
-          callStatusRecorded = true;
+          try {
+            await recordCallCompletion(
+              restaurantData.userId,
+              customerId,
+              callerNumber,
+              duration,
+              status
+            );
+          } catch (error) {
+            console.error(`[Utils] Error recording call completion: ${error.message}`);
+            // Don't reset flag - we don't want to retry and create duplicates
+          }
         }
       };
 
@@ -561,10 +571,7 @@ export const setupOpenAIWebSocket = (fastify) => {
               // Handle the function call based on the function name
               switch (response.name) {
                 case "location_sms":
-                  console.log(
-                    "📍 Handling location_sms with content:",
-                    args.content
-                  );
+                  console.log("📍 Handling location_sms");
                   locationSMS(args.content, callerNumber);
                   break;
                 case "transfer_call":
@@ -572,12 +579,13 @@ export const setupOpenAIWebSocket = (fastify) => {
                   transferCall(callSid);
                   break;
                 case "end_call":
-                  console.log("📞 Handling end_call with reason:", args.reason);
+                  console.log("📞 Handling end_call");
                   await recordCallEnd("failed"); // No order placed
                   endCall(connection);
                   break;
                 case "handle_finish":
-                  console.log("✅ Handling handle_finish with data:", args);
+                  // SECURITY: Sanitize PII in logs
+                  console.log("✅ Handling handle_finish with data:", sanitizeFunctionArgs(args));
                   if (restaurantData && restaurantData.customerData) {
                     customerId = restaurantData.customerData.id;
                   }
@@ -604,7 +612,8 @@ export const setupOpenAIWebSocket = (fastify) => {
                   await deleteOrderCall(pendingOrders[0]);
                   break;
                 case "update_order":
-                  console.log("🔄 Handling update_order with data:", args);
+                  // SECURITY: Sanitize PII in logs
+                  console.log("🔄 Handling update_order with data:", sanitizeFunctionArgs(args));
                   if (restaurantData && restaurantData.customerData) {
                     customerId = restaurantData.customerData.id;
                   }
@@ -628,7 +637,8 @@ export const setupOpenAIWebSocket = (fastify) => {
                   }, 7000);
                   break;
                 case "get_caller_name":
-                  console.log("👤 Handling get_caller_name with data:", args);
+                  // SECURITY: Sanitize PII in logs
+                  console.log("👤 Handling get_caller_name with data:", sanitizeFunctionArgs(args));
                   if (restaurantData && restaurantData.userId) {
                     try {
                       const customer = await getCallerName(
@@ -638,7 +648,7 @@ export const setupOpenAIWebSocket = (fastify) => {
                       );
                       customerId = customer?.id || null; // Store the customer ID for use in orders
                       console.log(
-                        `[OpenAI] Customer record processed for: ${args.caller_name} (ID: ${customerId})`
+                        `[OpenAI] Customer record processed (ID: ${customerId})`
                       );
                       // After capturing caller name, inject a short system context to avoid repeating greeting
                       const contextAfterName = {
@@ -831,8 +841,36 @@ export const setupOpenAIWebSocket = (fastify) => {
         console.log("[WebSocket] Disconnected from OpenAI Realtime API");
       });
 
-      openAiWs.on("error", (error) => {
-        console.error(`[WebSocket] Error: ${error.message}`);
+      openAiWs.on("error", async (error) => {
+        console.error(`[WebSocket] OpenAI WebSocket error: ${error.message}`);
+        console.error(`[WebSocket] Error stack: ${error.stack}`);
+
+        // Record call as failed due to technical error
+        await recordCallEnd("failed");
+
+        // Attempt to send error message to user via Twilio before closing
+        try {
+          if (connection && streamSid) {
+            // Send a clear event to stop any ongoing audio
+            connection.send(JSON.stringify({
+              event: "clear",
+              streamSid: streamSid
+            }));
+
+            // Note: We can't send audio directly here, but the connection will close
+            // and Twilio will handle it. In production, you might want to use
+            // Twilio's API to play a message before hanging up.
+          }
+        } catch (cleanupError) {
+          console.error(`[WebSocket] Error during cleanup: ${cleanupError.message}`);
+        }
+
+        // Close the Twilio connection gracefully
+        if (connection && connection.readyState === 1) { // 1 = OPEN
+          setTimeout(() => {
+            connection.close(1011, "OpenAI service error");
+          }, 1000);
+        }
       });
     });
   });
