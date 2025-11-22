@@ -960,10 +960,10 @@ export const setupOpenAIWebSocket = (fastify) => {
                     }, 200);
                   } else {
                     console.log(`[WebSocket] Still waiting for OpenAI... (state: ${openAiWs.readyState})`);
-                    setTimeout(initWhenReady, 100);
+                    // setTimeout(initWhenReady, 100);
                   }
                 };
-                setTimeout(initWhenReady, 100);
+                // setTimeout(initWhenReady, 100);
               }
               break;
             case "mark":
