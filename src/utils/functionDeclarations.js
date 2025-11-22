@@ -184,4 +184,21 @@ export const functionTools = [
       required: ["caller_name"],
     },
   },
+  {
+    type: "function",
+    name: "update_caller_name",
+    description:
+      "Update the caller's name if they correct it or want to change it during the conversation. Use this when the caller says their name is wrong or wants to update it.",
+    parameters: {
+      type: "object",
+      properties: {
+        new_name: {
+          type: "string",
+          description:
+            "The corrected or updated name that the caller wants to use.",
+        },
+      },
+      required: ["new_name"],
+    },
+  },
 ];

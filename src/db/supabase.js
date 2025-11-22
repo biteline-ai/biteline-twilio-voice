@@ -492,6 +492,43 @@ export async function addNewCustomer(userId, customerPhone, customerName) {
 }
 
 /**
+ * Updates an existing customer's name
+ * @param {string} customerId - Customer ID
+ * @param {string} newName - New customer name
+ * @returns {Promise<Object>} - The updated customer object
+ */
+export async function updateCustomerName(customerId, newName) {
+  try {
+    const { data, error } = await supabase
+      .from("customers")
+      .update({
+        customer_name: newName,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", customerId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error(
+        `[Supabase] Error updating customer name for ID ${customerId}: ${error.message}`
+      );
+      throw error;
+    }
+
+    console.log(
+      `[Supabase] Customer name updated successfully: ${newName} (ID: ${customerId})`
+    );
+    return data;
+  } catch (error) {
+    console.error(
+      `[Supabase] Unexpected error in updateCustomerName: ${error.message}`
+    );
+    throw error;
+  }
+}
+
+/**
  * Adds a call record to the calls table
  * @param {string} userId - Restaurant user ID
  * @param {string} customerId - Customer ID (can be null if customer not identified)

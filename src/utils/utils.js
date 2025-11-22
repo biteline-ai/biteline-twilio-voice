@@ -4,6 +4,7 @@ import {
   deleteOrder,
   addNewCustomer,
   addCallRecord,
+  updateCustomerName,
 } from "../db/supabase.js";
 import twilio from "twilio";
 import dotenv from "dotenv";
@@ -224,6 +225,28 @@ export async function getCallerName(callerName, callerPhone, userId) {
     return customer;
   } catch (error) {
     console.error(`[Utils] Error processing caller name: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Updates customer name in the database
+ * @param {string} customerId - Customer ID
+ * @param {string} newName - New customer name
+ * @returns {Promise<Object>} - The updated customer object
+ */
+export async function updateCallerName(customerId, newName) {
+  try {
+    console.log(
+      `[Utils] Updating customer name: ${newName} for customer ID: ${customerId}`
+    );
+    const updatedCustomer = await updateCustomerName(customerId, newName);
+    console.log(
+      `[Utils] Customer name updated successfully: ${updatedCustomer.customer_name}`
+    );
+    return updatedCustomer;
+  } catch (error) {
+    console.error(`[Utils] Error updating customer name: ${error.message}`);
     throw error;
   }
 }

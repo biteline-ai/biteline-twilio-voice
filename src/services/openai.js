@@ -11,6 +11,7 @@ import {
   updateOrderCall,
   formatPendingOrder,
   getCallerName,
+  updateCallerName,
   recordCallCompletion,
 } from "../utils/utils.js";
 // Import functionTools from functionDeclarations.js
@@ -162,6 +163,7 @@ export function generateSystemPrompt(restaurantData) {
 GENERAL RULES:
   - Before calling any function/tool, always say a brief sentence like "Let me check that for you..." so the user knows you're processing their request.
   - Catch the user's name in the first message and use it for the entire conversation.
+  - If the user corrects their name or says their name is wrong, use the function "update_caller_name" to update it immediately.
   - Limit your max output words to 50 with clear, concise answer.
   - Keep the conversation natural and engaging without interrupting.
 
@@ -230,7 +232,10 @@ GENERAL RULES:
    - Invoke a function call "get_caller_name(caller_name)" when the user provides their name.
    - This will create a customer record if they are a new caller, or retrieve existing customer information.
    - Use this function immediately when the user tells you their name for the first time.
-  4.5) [Handle Finish]
+  4.5) [Update Caller Name]
+   - If the user corrects their name or says their name is wrong (e.g., "That's not my name", "My name is actually...", "I want to change my name"), immediately invoke a function call "update_caller_name(new_name)".
+   - Use the corrected name for the rest of the conversation after updating.
+  4.6) [Handle Finish]
    - Invoke a function call "handle_finish(customer_name, order_items, total_amount, location, order_time)".
    - Set customer's name to "customer_name" field.
    - Set "order_items" as an array of objects with "name", "price", and "count" for each item.
@@ -238,9 +243,9 @@ GENERAL RULES:
    - Set the location which the user preferred to "location" field.
    - Set the time when the user wants to pick up the order to "order_time" field.
    - All fields are required, so take care about final confirmation for the order and find out all exact fields.
-  4.6) [Delete Order]
+  4.7) [Delete Order]
    - Invoke a function call "delete_order".
-  4.7) [Update Order]
+  4.8) [Update Order]
    - Invoke a function call "update_order(customer_name, order_items, total_amount, location, order_time)".
    - Set updated customer's name to "customer_name" field. If no updated data, set previous customer's name to "customer_name" field.
    - Set "order_items" as an updated array of objects with "name", "price", and "count" for each item. If no updated data, set previous order_items to "order_items" field.
@@ -392,8 +397,52 @@ export const setupOpenAIWebSocket = (fastify) => {
 
       const sendPreviousOrderContext = (pendingOrders) => {
         if (pendingOrders?.length > 0) {
-          const lastOrder = pendingOrders[0];
-          console.log("Previous Order:", lastOrder);
+          // Filter out orders where order_time has already passed
+          const now = new Date();
+          const validOrders = pendingOrders.filter((order) => {
+            if (!order.order_time) return false;
+            
+            try {
+              // Parse order_time - it could be in various formats (e.g., "5:30 PM", "17:30", etc.)
+              // Try to parse it as a time string and convert to today's date
+              const orderTimeStr = order.order_time;
+              const [timePart, ampm] = orderTimeStr.split(/\s+/);
+              let [hours, minutes] = timePart.split(':').map(Number);
+              
+              if (ampm) {
+                // Handle AM/PM format
+                if (ampm.toUpperCase() === 'PM' && hours !== 12) {
+                  hours += 12;
+                } else if (ampm.toUpperCase() === 'AM' && hours === 12) {
+                  hours = 0;
+                }
+              }
+              
+              const orderDateTime = new Date();
+              orderDateTime.setHours(hours, minutes || 0, 0, 0);
+              
+              // If order time is earlier than current time, it's in the past
+              const isFuture = orderDateTime > now;
+              
+              if (!isFuture) {
+                console.log(`[Order Filter] Skipping past order: ${order.order_time} (order ID: ${order.id})`);
+              }
+              
+              return isFuture;
+            } catch (error) {
+              console.error(`[Order Filter] Error parsing order_time "${order.order_time}":`, error);
+              // If we can't parse it, include it to be safe (let AI handle it)
+              return true;
+            }
+          });
+
+          if (validOrders.length === 0) {
+            console.log("[Order Filter] No valid future orders found, skipping previous order context");
+            return;
+          }
+
+          const lastOrder = validOrders[0];
+          console.log("Previous Order (filtered):", lastOrder);
 
           // Format the order in a clear, structured way for the model
           const formattedOrder = formatPendingOrder(lastOrder);
@@ -469,26 +518,58 @@ export const setupOpenAIWebSocket = (fastify) => {
 
       openAiWs.on("message", async (data) => {
         try {
-          const response = JSON.parse(data);
+          if (!data) {
+            console.warn("[WebSocket] Received empty message from OpenAI");
+            return;
+          }
+          
+          let response;
+          try {
+            response = JSON.parse(data);
+          } catch (parseError) {
+            console.error("[WebSocket] Error parsing OpenAI message:", parseError.message);
+            console.error("[WebSocket] Raw message data:", data?.toString?.()?.substring(0, 200));
+            return;
+          }
+          
+          if (!response || !response.type) {
+            console.warn("[WebSocket] Received message without type:", response);
+            return;
+          }
 
           if (response.type === "response.audio.delta" && response.delta) {
-            const audioDelta = {
-              event: "media",
-              streamSid: streamSid,
-              media: {
-                payload: Buffer.from(response.delta, "base64").toString(
-                  "base64"
-                ),
-              },
-            };
-            connection.send(JSON.stringify(audioDelta));
-            if (!responseStartTimestampTwilio) {
-              responseStartTimestampTwilio = latestMediaTimestamp;
+            try {
+              if (!streamSid) {
+                console.warn("[WebSocket] Cannot send audio delta: streamSid not set");
+                return;
+              }
+              
+              const audioDelta = {
+                event: "media",
+                streamSid: streamSid,
+                media: {
+                  payload: Buffer.from(response.delta, "base64").toString(
+                    "base64"
+                  ),
+                },
+              };
+              
+              if (connection && connection.readyState === 1) { // WebSocket.OPEN
+                connection.send(JSON.stringify(audioDelta));
+              } else {
+                console.warn("[WebSocket] Cannot send audio delta: connection not open (state:", connection?.readyState, ")");
+              }
+              
+              if (!responseStartTimestampTwilio) {
+                responseStartTimestampTwilio = latestMediaTimestamp;
+              }
+              if (response.item_id) {
+                lastAssistantItem = response.item_id;
+              }
+              sendMark(connection, streamSid);
+            } catch (audioError) {
+              console.error("[WebSocket] Error handling audio delta:", audioError.message);
             }
-            if (response.item_id) {
-              lastAssistantItem = response.item_id;
-            }
-            sendMark(connection, streamSid);
           }
 
           if (response.type === "input_audio_buffer.speech_started") {
@@ -637,6 +718,10 @@ export const setupOpenAIWebSocket = (fastify) => {
                         restaurantData.userId
                       );
                       customerId = customer?.id || null; // Store the customer ID for use in orders
+                      // Update restaurantData with the new customer data
+                      if (restaurantData) {
+                        restaurantData.customerData = customer;
+                      }
                       console.log(
                         `[OpenAI] Customer record processed for: ${args.caller_name} (ID: ${customerId})`
                       );
@@ -667,6 +752,52 @@ export const setupOpenAIWebSocket = (fastify) => {
                   } else {
                     console.error(
                       "[OpenAI] Cannot process caller name: restaurant data not available"
+                    );
+                  }
+                  break;
+                case "update_caller_name":
+                  console.log("✏️ Handling update_caller_name with data:", args);
+                  if (customerId && restaurantData && restaurantData.userId) {
+                    try {
+                      const updatedCustomer = await updateCallerName(
+                        customerId,
+                        args.new_name
+                      );
+                      // Update restaurantData with the updated customer data
+                      if (restaurantData) {
+                        restaurantData.customerData = updatedCustomer;
+                      }
+                      console.log(
+                        `[OpenAI] Customer name updated to: ${args.new_name} (ID: ${customerId})`
+                      );
+                      // Inject context to inform AI about the name change
+                      const contextAfterNameUpdate = {
+                        type: "conversation.item.create",
+                        item: {
+                          type: "message",
+                          role: "user",
+                          content: [
+                            {
+                              type: "input_text",
+                              text: `[SYSTEM CONTEXT]: The caller's name has been updated to "${args.new_name}". Use this name for the rest of the conversation.`,
+                            },
+                          ],
+                        },
+                      };
+                      if (openAiWs.readyState === WebSocket.OPEN) {
+                        openAiWs.send(JSON.stringify(contextAfterNameUpdate));
+                      } else {
+                        console.warn("[WebSocket] Cannot send context after name update: WebSocket not open (state:", openAiWs.readyState, ")");
+                      }
+                    } catch (error) {
+                      console.error(
+                        `[OpenAI] Error updating caller name: ${error.message}`
+                      );
+                      // Don't break the conversation flow if name update fails
+                    }
+                  } else {
+                    console.error(
+                      "[OpenAI] Cannot update caller name: customer ID or restaurant data not available"
                     );
                   }
                   break;
@@ -702,28 +833,68 @@ export const setupOpenAIWebSocket = (fastify) => {
           }
         } catch (error) {
           console.error(
-            "Error processing OpenAI message:",
-            error,
-            "Raw message:",
-            data
+            "[WebSocket] Error processing OpenAI message:",
+            error.message,
+            error.stack
           );
+          console.error("[WebSocket] Raw message (first 500 chars):", 
+            data?.toString?.()?.substring(0, 500) || "No data"
+          );
+          
+          // Try to recover by requesting a new response if the connection is still open
+          if (openAiWs.readyState === WebSocket.OPEN) {
+            try {
+              console.log("[WebSocket] Attempting to recover by requesting new response");
+              openAiWs.send(JSON.stringify({ type: "response.create" }));
+            } catch (recoveryError) {
+              console.error("[WebSocket] Recovery attempt failed:", recoveryError.message);
+            }
+          }
         }
       });
 
       connection.on("message", async (message) => {
         try {
-          const data = JSON.parse(message);
+          if (!message) {
+            console.warn("[Twilio] Received empty message");
+            return;
+          }
+          
+          let data;
+          try {
+            data = JSON.parse(message);
+          } catch (parseError) {
+            console.error("[Twilio] Error parsing message:", parseError.message);
+            console.error("[Twilio] Raw message:", message?.toString?.()?.substring(0, 200));
+            return;
+          }
+          
+          if (!data || !data.event) {
+            console.warn("[Twilio] Received message without event:", data);
+            return;
+          }
 
           switch (data.event) {
             case "media":
-              latestMediaTimestamp = data.media.timestamp;
+              try {
+                if (!data.media || !data.media.payload) {
+                  console.warn("[Twilio] Media event missing payload");
+                  break;
+                }
+                
+                latestMediaTimestamp = data.media.timestamp || latestMediaTimestamp;
 
-              if (openAiWs.readyState === WebSocket.OPEN) {
-                const audioAppend = {
-                  type: "input_audio_buffer.append",
-                  audio: data.media.payload,
-                };
-                openAiWs.send(JSON.stringify(audioAppend));
+                if (openAiWs.readyState === WebSocket.OPEN) {
+                  const audioAppend = {
+                    type: "input_audio_buffer.append",
+                    audio: data.media.payload,
+                  };
+                  openAiWs.send(JSON.stringify(audioAppend));
+                } else {
+                  console.warn("[Twilio] Cannot append audio: OpenAI WebSocket not open (state:", openAiWs.readyState, ")");
+                }
+              } catch (mediaError) {
+                console.error("[Twilio] Error handling media event:", mediaError.message);
               }
               break;
             case "start":
@@ -812,7 +983,11 @@ export const setupOpenAIWebSocket = (fastify) => {
               break;
           }
         } catch (error) {
-          console.error("Error parsing message:", error, "Message:", message);
+          console.error("[Twilio] Error processing message:", error.message, error.stack);
+          console.error("[Twilio] Message (first 500 chars):", 
+            message?.toString?.()?.substring(0, 500) || "No message"
+          );
+          // Don't crash - continue processing other messages
         }
       });
 
@@ -832,7 +1007,15 @@ export const setupOpenAIWebSocket = (fastify) => {
       });
 
       openAiWs.on("error", (error) => {
-        console.error(`[WebSocket] Error: ${error.message}`);
+        console.error(`[WebSocket] OpenAI WebSocket error:`, error.message, error.stack);
+        // Try to reconnect or notify about the error
+        // The connection.on("close") handler will record the call as failed
+      });
+      
+      // Add error handler for Twilio connection
+      connection.on("error", (error) => {
+        console.error(`[Twilio] Connection error:`, error.message, error.stack);
+        // Try to gracefully handle the error
       });
     });
   });
