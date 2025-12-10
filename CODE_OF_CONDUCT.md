@@ -60,7 +60,7 @@ The following behaviors are considered unacceptable:
 
 If you experience or witness unacceptable behavior, please report it to the project maintainers at:
 
-- Email: [project-maintainer-email]
+- Email: [iucommunity@proton.me]
 - GitHub: Open an issue with the "conduct" label
 
 All reports will be kept confidential and will be reviewed promptly.
