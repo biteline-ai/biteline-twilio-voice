@@ -49,8 +49,8 @@ export async function locationSMS(content, callerNumber) {
  * @param {string} callSid - The Twilio call SID
  */
 export async function transferCall(callSid) {
-  const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>\n<Response>\n  <Dial callerId="${twilioPhoneNumber}">${managerNumber}</Dial>\n</Response>`;
-  await client.calls(callSid).update({ twiml: twimlResponse });
+  // const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>\n<Response>\n  <Dial callerId="${twilioPhoneNumber}">${managerNumber}</Dial>\n</Response>`;
+  // await client.calls(callSid).update({ twiml: twimlResponse });
 }
 
 /**

@@ -262,6 +262,7 @@ GENERAL RULES:
 dotenv.config();
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-4o-realtime-preview-2024-12-17";
 
 export const setupOpenAIWebSocket = (fastify) => {
   fastify.register(async (fastify) => {
@@ -301,21 +302,488 @@ export const setupOpenAIWebSocket = (fastify) => {
         }
       };
 
+      // Audio buffer for when WebSocket isn't ready yet
+      const audioBuffer = [];
+      let isSessionInitialized = false;
+      let connectionTimeout = null;
+      let connectionRetryCount = 0;
+      const maxRetries = 3;
+      
       // Initialize OpenAI WebSocket connection
-      const openAiWs = new WebSocket(
-        "wss://api.openai.com/v1/realtime?model=gpt-realtime",
-        {
-          headers: {
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-            "OpenAI-Beta": "realtime=v1",
-          },
-        }
-      );
+      let openAiWs = null;
+      
+      // Function to create and setup OpenAI WebSocket
+      const createAndSetupOpenAIWebSocket = () => {
+        try {
+          if (!OPENAI_API_KEY) {
+            console.error("[WebSocket] ERROR: OPENAI_API_KEY is not set! Please check your .env file and ensure OPENAI_API_KEY is configured.");
+            return null;
+          }
+          
+          if (!OPENAI_API_KEY.startsWith('sk-')) {
+            console.warn("[WebSocket] WARNING: OPENAI_API_KEY doesn't start with 'sk-'. This might not be a valid OpenAI API key.");
+          }
+          
+          const wsUrl = `wss://api.openai.com/v1/realtime?model=${OPENAI_REALTIME_MODEL}`;
+          console.log("[WebSocket] Creating OpenAI WebSocket connection to:", wsUrl);
+          console.log("[WebSocket] Model:", OPENAI_REALTIME_MODEL);
+          console.log("[WebSocket] API Key present:", OPENAI_API_KEY ? "Yes (length: " + OPENAI_API_KEY.length + ")" : "No");
+          
+          const ws = new WebSocket(
+            wsUrl,
+            {
+              headers: {
+                Authorization: `Bearer ${OPENAI_API_KEY}`,
+                "OpenAI-Beta": "realtime=v1",
+              },
+            }
+          );
+          
+          // Log connection attempt
+          console.log("[WebSocket] WebSocket instance created, waiting for connection... State:", ws.readyState);
+          
+          // Setup event handlers
+          ws.on("open", () => {
+            if (connectionTimeout) {
+              clearTimeout(connectionTimeout);
+              connectionTimeout = null;
+            }
+            console.log("[WebSocket] Connected to OpenAI Realtime API");
+            connectionRetryCount = 0; // Reset retry count on successful connection
+            
+            // Flush any buffered audio
+            if (audioBuffer.length > 0) {
+              console.log(`[WebSocket] Flushing ${audioBuffer.length} buffered audio chunks`);
+              audioBuffer.forEach(audioData => {
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify(audioData));
+                }
+              });
+              audioBuffer.length = 0; // Clear buffer
+            }
+            
+            // If restaurant data is already available, initialize session
+            // Note: This will be called from attemptInitialization if pendingOrders isn't ready yet
+            if (restaurantData && !isSessionInitialized) {
+              console.log("[WebSocket] WebSocket opened, checking if we can initialize session...");
+              // Give a small delay to allow pendingOrders to be fetched if it's still in progress
+              setTimeout(() => {
+                if (!isSessionInitialized) {
+                  console.log("[WebSocket] Initializing session from 'open' handler");
+                  initializeSession();
+                  isSessionInitialized = true;
+                  if (pendingOrders && pendingOrders.length > 0) {
+                    setTimeout(() => {
+                      sendPreviousOrderContext(pendingOrders);
+                    }, 200);
+                  }
+                }
+              }, 500);
+            } else if (!restaurantData) {
+              console.log("[WebSocket] Restaurant data not yet available, session will be initialized when data is ready");
+            }
+          });
+          
+          ws.on("error", (error) => {
+            console.error(`[WebSocket] OpenAI WebSocket error:`, error.message);
+            if (error.stack) {
+              console.error(`[WebSocket] Error stack:`, error.stack);
+            }
+            
+            // Retry connection on error
+            if (connectionRetryCount < maxRetries && ws.readyState !== WebSocket.OPEN) {
+              connectionRetryCount++;
+              console.log(`[WebSocket] Retrying connection after error (attempt ${connectionRetryCount}/${maxRetries})...`);
+              setTimeout(() => {
+                if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+                  const newWs = createAndSetupOpenAIWebSocket();
+                  if (newWs) {
+                    openAiWs = newWs;
+                  }
+                }
+              }, 1000 * connectionRetryCount);
+            }
+          });
+          
+          ws.on("close", (code, reason) => {
+            console.log(`[WebSocket] Disconnected from OpenAI Realtime API. Code: ${code}, Reason: ${reason || 'No reason provided'}`);
+            if (connectionTimeout) {
+              clearTimeout(connectionTimeout);
+              connectionTimeout = null;
+            }
+          });
+          
+          // Setup message handler for OpenAI WebSocket
+          ws.on("message", async (data) => {
+            try {
+              if (!data) {
+                console.warn("[WebSocket] Received empty message from OpenAI");
+                return;
+              }
+              
+              let response;
+              try {
+                response = JSON.parse(data);
+              } catch (parseError) {
+                console.error("[WebSocket] Error parsing OpenAI message:", parseError.message);
+                console.error("[WebSocket] Raw message data:", data?.toString?.()?.substring(0, 200));
+                return;
+              }
+              
+              if (!response || !response.type) {
+                console.warn("[WebSocket] Received message without type:", response);
+                return;
+              }
 
-      openAiWs.on("open", () => {
-        console.log("[WebSocket] Connected to OpenAI Realtime API");
-        // Don't initialize session immediately - wait for restaurant data
-      });
+              if (response.type === "response.audio.delta" && response.delta) {
+                try {
+                  if (!streamSid) {
+                    console.warn("[WebSocket] Cannot send audio delta: streamSid not set");
+                    return;
+                  }
+                  
+                  const audioDelta = {
+                    event: "media",
+                    streamSid: streamSid,
+                    media: {
+                      payload: Buffer.from(response.delta, "base64").toString(
+                        "base64"
+                      ),
+                    },
+                  };
+                  
+                  if (connection && connection.readyState === 1) { // WebSocket.OPEN
+                    connection.send(JSON.stringify(audioDelta));
+                  } else {
+                    console.warn("[WebSocket] Cannot send audio delta: connection not open (state:", connection?.readyState, ")");
+                  }
+                  
+                  if (!responseStartTimestampTwilio) {
+                    responseStartTimestampTwilio = latestMediaTimestamp;
+                  }
+                  if (response.item_id) {
+                    lastAssistantItem = response.item_id;
+                  }
+                  sendMark(connection, streamSid);
+                } catch (audioError) {
+                  console.error("[WebSocket] Error handling audio delta:", audioError.message);
+                }
+              }
+
+              if (response.type === "input_audio_buffer.speech_started") {
+                handleSpeechStartedEvent();
+              }
+
+              // --- Function Call Detection for GPT-4o Realtime API ---
+              if (
+                response.type === "conversation.item.created" &&
+                response.item &&
+                response.item.type === "function_call"
+              ) {
+                const functionName = response.item.name;
+                console.log("✅ Function call detected");
+                console.log("🔧 Function name:", functionName);
+              }
+
+              // Handle function call arguments that might come in chunks
+              if (response.type === "response.function_call_arguments.delta") {
+                const callId = response.id;
+                if (!functionCallBuffer.has(callId)) {
+                  functionCallBuffer.set(callId, "");
+                }
+                functionCallBuffer.set(callId, functionCallBuffer.get(callId) + (response.delta || ""));
+              }
+
+              if (response.type === "response.function_call_arguments.done") {
+                console.log(
+                  "✅ RESPONSE FUNCTION CALL DONE - NAME:",
+                  response.name
+                );
+
+                // Get the complete arguments (either from buffer or direct)
+                const callId = response.id;
+                let completeArguments = response.arguments;
+                
+                // If we have buffered data, use it
+                if (functionCallBuffer.has(callId)) {
+                  completeArguments = functionCallBuffer.get(callId);
+                  functionCallBuffer.delete(callId); // Clean up buffer
+                  console.log("🔍 Using buffered arguments for call ID:", callId);
+                }
+                
+                console.log(
+                  "✅ RESPONSE FUNCTION CALL DONE - ARGUMENTS:",
+                  completeArguments
+                );
+
+                let args = {};
+                try {
+                  // Log the raw arguments to debug JSON issues
+                  console.log("🔍 Raw arguments string:", JSON.stringify(completeArguments));
+                  console.log("🔍 Arguments length:", completeArguments?.length);
+                  
+                  // Validate arguments before parsing
+                  if (!completeArguments || typeof completeArguments !== 'string') {
+                    console.error("❌ Invalid arguments format:", typeof completeArguments);
+                    throw new Error("Arguments is not a string");
+                  }
+                  
+                  // Check for incomplete JSON (common issue with streaming)
+                  const trimmedArgs = completeArguments.trim();
+                  if (!trimmedArgs.startsWith('{') || !trimmedArgs.endsWith('}')) {
+                    console.error("❌ Incomplete JSON detected:", trimmedArgs);
+                    throw new Error("Incomplete JSON arguments");
+                  }
+                  
+                  args = JSON.parse(trimmedArgs);
+                  // Handle the function call based on the function name
+                  switch (response.name) {
+                    case "location_sms":
+                      console.log(
+                        "📍 Handling location_sms with content:",
+                        args.content
+                      );
+                      locationSMS(args.content, callerNumber);
+                      break;
+                    case "transfer_call":
+                      console.log("🔄 Handling transfer_call");
+                      transferCall(callSid);
+                      break;
+                    case "end_call":
+                      console.log("📞 Handling end_call with reason:", args.reason);
+                      await recordCallEnd("failed"); // No order placed
+                      endCall(connection);
+                      break;
+                    case "handle_finish":
+                      console.log("✅ Handling handle_finish with data:", args);
+                      if (restaurantData && restaurantData.customerData) {
+                        customerId = restaurantData.customerData.id;
+                      }
+                      if (restaurantData && restaurantData.userId && customerId) {
+                        handleFinish(
+                          args,
+                          callerNumber,
+                          restaurantData.userId,
+                          customerId
+                        );
+                        await recordCallEnd("completed"); // Order placed successfully
+                      } else {
+                        console.error(
+                          "[OpenAI] Cannot handle finish: restaurant data or customer ID not available"
+                        );
+                        await recordCallEnd("failed"); // Failed to place order
+                      }
+                      setTimeout(() => {
+                        endCall(connection);
+                      }, 7000);
+                      break;
+                    case "delete_order":
+                      console.log("🗑️ Handling delete_order");
+                      await deleteOrderCall(pendingOrders[0]);
+                      break;
+                    case "update_order":
+                      console.log("🔄 Handling update_order with data:", args);
+                      if (restaurantData && restaurantData.customerData) {
+                        customerId = restaurantData.customerData.id;
+                      }
+                      if (restaurantData && restaurantData.userId && customerId) {
+                        await updateOrderCall(
+                          pendingOrders[0],
+                          args,
+                          callerNumber,
+                          restaurantData.userId,
+                          customerId
+                        );
+                        await recordCallEnd("completed"); // Order updated successfully
+                      } else {
+                        console.error(
+                          "[OpenAI] Cannot update order: restaurant data or customer ID not available"
+                        );
+                        await recordCallEnd("failed"); // Failed to update order
+                      }
+                      setTimeout(() => {
+                        endCall(connection);
+                      }, 7000);
+                      break;
+                    case "get_caller_name":
+                      console.log("👤 Handling get_caller_name with data:", args);
+                      if (restaurantData && restaurantData.userId) {
+                        try {
+                          const customer = await getCallerName(
+                            args.caller_name,
+                            callerNumber,
+                            restaurantData.userId
+                          );
+                          customerId = customer?.id || null; // Store the customer ID for use in orders
+                          // Update restaurantData with the new customer data
+                          if (restaurantData) {
+                            restaurantData.customerData = customer;
+                          }
+                          console.log(
+                            `[OpenAI] Customer record processed for: ${args.caller_name} (ID: ${customerId})`
+                          );
+                          // After capturing caller name, inject a short system context to avoid repeating greeting
+                          const contextAfterName = {
+                            type: "conversation.item.create",
+                            item: {
+                              type: "message",
+                              role: "user",
+                              content: [
+                                {
+                                  type: "input_text",
+                                  text: "[SYSTEM CONTEXT]: You have captured the caller's name. Do not repeat the full initial greeting again. Proceed by asking what they'd like to order or how you can help, referencing the menu if useful.",
+                                },
+                              ],
+                            },
+                          };
+                          if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify(contextAfterName));
+                          } else {
+                            console.warn("[WebSocket] Cannot send context after name: WebSocket not open (state:", ws.readyState, ")");
+                          }
+                        } catch (error) {
+                          console.error(
+                            `[OpenAI] Error processing caller name: ${error.message}`
+                          );
+                        }
+                      } else {
+                        console.error(
+                          "[OpenAI] Cannot process caller name: restaurant data not available"
+                        );
+                      }
+                      break;
+                    case "update_caller_name":
+                      console.log("✏️ Handling update_caller_name with data:", args);
+                      if (customerId && restaurantData && restaurantData.userId) {
+                        try {
+                          const updatedCustomer = await updateCallerName(
+                            customerId,
+                            args.new_name
+                          );
+                          // Update restaurantData with the updated customer data
+                          if (restaurantData) {
+                            restaurantData.customerData = updatedCustomer;
+                          }
+                          console.log(
+                            `[OpenAI] Customer name updated to: ${args.new_name} (ID: ${customerId})`
+                          );
+                          // Inject context to inform AI about the name change
+                          const contextAfterNameUpdate = {
+                            type: "conversation.item.create",
+                            item: {
+                              type: "message",
+                              role: "user",
+                              content: [
+                                {
+                                  type: "input_text",
+                                  text: `[SYSTEM CONTEXT]: The caller's name has been updated to "${args.new_name}". Use this name for the rest of the conversation.`,
+                                },
+                              ],
+                            },
+                          };
+                          if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify(contextAfterNameUpdate));
+                          } else {
+                            console.warn("[WebSocket] Cannot send context after name update: WebSocket not open (state:", ws.readyState, ")");
+                          }
+                        } catch (error) {
+                          console.error(
+                            `[OpenAI] Error updating caller name: ${error.message}`
+                          );
+                          // Don't break the conversation flow if name update fails
+                        }
+                      } else {
+                        console.error(
+                          "[OpenAI] Cannot update caller name: customer ID or restaurant data not available"
+                        );
+                      }
+                      break;
+                    default:
+                      console.log("❓ Unknown function call:", response.name);
+                  }
+                } catch (e) {
+                  console.error("❌ Error parsing function call arguments:", e.message);
+                  console.error("❌ Raw arguments that failed:", response.arguments);
+                  
+                  // For handle_finish, we can't proceed without valid arguments
+                  if (response.name === "handle_finish") {
+                    console.error("❌ Cannot handle finish without valid order data");
+                    // Record call as failed since we can't complete the order
+                    await recordCallEnd("failed");
+                    setTimeout(() => {
+                      endCall(connection);
+                    }, 3000);
+                    return;
+                  }
+                  
+                  // For other functions, we might be able to continue
+                  console.error("❌ Skipping function call due to parsing error");
+                }
+                // After handling a function call, prompt the model to continue its turn
+                try {
+                  if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: "response.create" }));
+                  }
+                } catch (err) {
+                  console.error("[OpenAI] Failed to request next response:", err);
+                }
+              }
+            } catch (error) {
+              console.error(
+                "[WebSocket] Error processing OpenAI message:",
+                error.message,
+                error.stack
+              );
+              console.error("[WebSocket] Raw message (first 500 chars):", 
+                data?.toString?.()?.substring(0, 500) || "No data"
+              );
+              
+              // Try to recover by requesting a new response if the connection is still open
+              if (ws.readyState === WebSocket.OPEN) {
+                try {
+                  console.log("[WebSocket] Attempting to recover by requesting new response");
+                  ws.send(JSON.stringify({ type: "response.create" }));
+                } catch (recoveryError) {
+                  console.error("[WebSocket] Recovery attempt failed:", recoveryError.message);
+                }
+              }
+            }
+          });
+          
+          // Set connection timeout (10 seconds)
+          connectionTimeout = setTimeout(() => {
+            if (ws.readyState !== WebSocket.OPEN) {
+              console.error("[WebSocket] Connection timeout - OpenAI WebSocket failed to connect within 10 seconds");
+              ws.close();
+              // Retry connection
+              if (connectionRetryCount < maxRetries) {
+                connectionRetryCount++;
+                console.log(`[WebSocket] Retrying connection (attempt ${connectionRetryCount}/${maxRetries})...`);
+                setTimeout(() => {
+                  const newWs = createAndSetupOpenAIWebSocket();
+                  if (newWs) {
+                    openAiWs = newWs;
+                  }
+                }, 1000 * connectionRetryCount); // Exponential backoff
+              } else {
+                console.error("[WebSocket] Max retries reached. Connection failed.");
+              }
+            }
+          }, 10000);
+          
+          return ws;
+        } catch (error) {
+          console.error("[WebSocket] Error creating WebSocket:", error.message);
+          if (error.stack) {
+            console.error("[WebSocket] Error stack:", error.stack);
+          }
+          return null;
+        }
+      };
+      
+      // Don't create WebSocket immediately - wait for Twilio stream to start
+      // This ensures we only create connections when there's an actual call
+      console.log("[WebSocket] Waiting for Twilio stream to start before creating OpenAI WebSocket...");
 
       const initializeSession = () => {
         console.log("[WebSocket] ===== INITIALIZING SESSION =====");
@@ -345,13 +813,13 @@ export const setupOpenAIWebSocket = (fastify) => {
           },
         };
 
-        if (openAiWs.readyState === WebSocket.OPEN) {
+        if (openAiWs && openAiWs.readyState === WebSocket.OPEN) {
           console.log("[WebSocket] Sending session.update to OpenAI");
           openAiWs.send(JSON.stringify(sessionUpdate));
           console.log("[WebSocket] Sending initial conversation item");
           sendInitialConversationItem();
         } else {
-          console.warn("[WebSocket] Cannot initialize session: WebSocket not open (state:", openAiWs.readyState, ")");
+          console.warn("[WebSocket] Cannot initialize session: WebSocket not open (state:", openAiWs ? openAiWs.readyState : 'NULL', ")");
         }
       };
 
@@ -386,12 +854,12 @@ export const setupOpenAIWebSocket = (fastify) => {
           },
         };
 
-        if (openAiWs.readyState === WebSocket.OPEN) {
+        if (openAiWs && openAiWs.readyState === WebSocket.OPEN) {
           openAiWs.send(JSON.stringify(initialConversationItem));
           openAiWs.send(JSON.stringify({ type: "response.create" }));
           hasSentInitialGreeting = true;
         } else {
-          console.warn("[WebSocket] Cannot send initial conversation item: WebSocket not open (state:", openAiWs.readyState, ")");
+          console.warn("[WebSocket] Cannot send initial conversation item: WebSocket not open (state:", openAiWs ? openAiWs.readyState : 'NULL', ")");
         }
       };
 
@@ -462,10 +930,10 @@ export const setupOpenAIWebSocket = (fastify) => {
           };
           
           // Check WebSocket state before sending
-          if (openAiWs.readyState === WebSocket.OPEN) {
+          if (openAiWs && openAiWs.readyState === WebSocket.OPEN) {
             openAiWs.send(JSON.stringify(contextInjection));
           } else {
-            console.warn("[WebSocket] Cannot send previous order context: WebSocket not open (state:", openAiWs.readyState, ")");
+            console.warn("[WebSocket] Cannot send previous order context: WebSocket not open (state:", openAiWs ? openAiWs.readyState : 'NULL', ")");
           }
         }
       };
@@ -483,10 +951,10 @@ export const setupOpenAIWebSocket = (fastify) => {
               content_index: 0,
               audio_end_ms: elapsedTime,
             };
-            if (openAiWs.readyState === WebSocket.OPEN) {
+            if (openAiWs && openAiWs.readyState === WebSocket.OPEN) {
               openAiWs.send(JSON.stringify(truncateEvent));
             } else {
-              console.warn("[WebSocket] Cannot send truncate event: WebSocket not open (state:", openAiWs.readyState, ")");
+              console.warn("[WebSocket] Cannot send truncate event: WebSocket not open (state:", openAiWs ? openAiWs.readyState : 'NULL', ")");
             }
           }
 
@@ -516,342 +984,8 @@ export const setupOpenAIWebSocket = (fastify) => {
         }
       };
 
-      openAiWs.on("message", async (data) => {
-        try {
-          if (!data) {
-            console.warn("[WebSocket] Received empty message from OpenAI");
-            return;
-          }
-          
-          let response;
-          try {
-            response = JSON.parse(data);
-          } catch (parseError) {
-            console.error("[WebSocket] Error parsing OpenAI message:", parseError.message);
-            console.error("[WebSocket] Raw message data:", data?.toString?.()?.substring(0, 200));
-            return;
-          }
-          
-          if (!response || !response.type) {
-            console.warn("[WebSocket] Received message without type:", response);
-            return;
-          }
-
-          if (response.type === "response.audio.delta" && response.delta) {
-            try {
-              if (!streamSid) {
-                console.warn("[WebSocket] Cannot send audio delta: streamSid not set");
-                return;
-              }
-              
-              const audioDelta = {
-                event: "media",
-                streamSid: streamSid,
-                media: {
-                  payload: Buffer.from(response.delta, "base64").toString(
-                    "base64"
-                  ),
-                },
-              };
-              
-              if (connection && connection.readyState === 1) { // WebSocket.OPEN
-                connection.send(JSON.stringify(audioDelta));
-              } else {
-                console.warn("[WebSocket] Cannot send audio delta: connection not open (state:", connection?.readyState, ")");
-              }
-              
-              if (!responseStartTimestampTwilio) {
-                responseStartTimestampTwilio = latestMediaTimestamp;
-              }
-              if (response.item_id) {
-                lastAssistantItem = response.item_id;
-              }
-              sendMark(connection, streamSid);
-            } catch (audioError) {
-              console.error("[WebSocket] Error handling audio delta:", audioError.message);
-            }
-          }
-
-          if (response.type === "input_audio_buffer.speech_started") {
-            handleSpeechStartedEvent();
-          }
-
-          // --- Function Call Detection for GPT-4o Realtime API ---
-          if (
-            response.type === "conversation.item.created" &&
-            response.item &&
-            response.item.type === "function_call"
-          ) {
-            const functionName = response.item.name;
-            console.log("✅ Function call detected");
-            console.log("🔧 Function name:", functionName);
-          }
-
-          // Handle function call arguments that might come in chunks
-          if (response.type === "response.function_call_arguments.delta") {
-            const callId = response.id;
-            if (!functionCallBuffer.has(callId)) {
-              functionCallBuffer.set(callId, "");
-            }
-            functionCallBuffer.set(callId, functionCallBuffer.get(callId) + (response.delta || ""));
-          }
-
-          if (response.type === "response.function_call_arguments.done") {
-            // console.log("✅ RESPONSE FUNCTION CALL DONE - ID:", response.id);
-            console.log(
-              "✅ RESPONSE FUNCTION CALL DONE - NAME:",
-              response.name
-            );
-
-            // Get the complete arguments (either from buffer or direct)
-            const callId = response.id;
-            let completeArguments = response.arguments;
-            
-            // If we have buffered data, use it
-            if (functionCallBuffer.has(callId)) {
-              completeArguments = functionCallBuffer.get(callId);
-              functionCallBuffer.delete(callId); // Clean up buffer
-              console.log("🔍 Using buffered arguments for call ID:", callId);
-            }
-            
-            console.log(
-              "✅ RESPONSE FUNCTION CALL DONE - ARGUMENTS:",
-              completeArguments
-            );
-
-            let args = {};
-            try {
-              // Log the raw arguments to debug JSON issues
-              console.log("🔍 Raw arguments string:", JSON.stringify(completeArguments));
-              console.log("🔍 Arguments length:", completeArguments?.length);
-              
-              // Validate arguments before parsing
-              if (!completeArguments || typeof completeArguments !== 'string') {
-                console.error("❌ Invalid arguments format:", typeof completeArguments);
-                throw new Error("Arguments is not a string");
-              }
-              
-              // Check for incomplete JSON (common issue with streaming)
-              const trimmedArgs = completeArguments.trim();
-              if (!trimmedArgs.startsWith('{') || !trimmedArgs.endsWith('}')) {
-                console.error("❌ Incomplete JSON detected:", trimmedArgs);
-                throw new Error("Incomplete JSON arguments");
-              }
-              
-              args = JSON.parse(trimmedArgs);
-              // Handle the function call based on the function name
-              switch (response.name) {
-                case "location_sms":
-                  console.log(
-                    "📍 Handling location_sms with content:",
-                    args.content
-                  );
-                  locationSMS(args.content, callerNumber);
-                  break;
-                case "transfer_call":
-                  console.log("🔄 Handling transfer_call");
-                  transferCall(callSid);
-                  break;
-                case "end_call":
-                  console.log("📞 Handling end_call with reason:", args.reason);
-                  await recordCallEnd("failed"); // No order placed
-                  endCall(connection);
-                  break;
-                case "handle_finish":
-                  console.log("✅ Handling handle_finish with data:", args);
-                  if (restaurantData && restaurantData.customerData) {
-                    customerId = restaurantData.customerData.id;
-                  }
-                  if (restaurantData && restaurantData.userId && customerId) {
-                    handleFinish(
-                      args,
-                      callerNumber,
-                      restaurantData.userId,
-                      customerId
-                    );
-                    await recordCallEnd("completed"); // Order placed successfully
-                  } else {
-                    console.error(
-                      "[OpenAI] Cannot handle finish: restaurant data or customer ID not available"
-                    );
-                    await recordCallEnd("failed"); // Failed to place order
-                  }
-                  setTimeout(() => {
-                    endCall(connection);
-                  }, 7000);
-                  break;
-                case "delete_order":
-                  console.log("🗑️ Handling delete_order");
-                  await deleteOrderCall(pendingOrders[0]);
-                  break;
-                case "update_order":
-                  console.log("🔄 Handling update_order with data:", args);
-                  if (restaurantData && restaurantData.customerData) {
-                    customerId = restaurantData.customerData.id;
-                  }
-                  if (restaurantData && restaurantData.userId && customerId) {
-                    await updateOrderCall(
-                      pendingOrders[0],
-                      args,
-                      callerNumber,
-                      restaurantData.userId,
-                      customerId
-                    );
-                    await recordCallEnd("completed"); // Order updated successfully
-                  } else {
-                    console.error(
-                      "[OpenAI] Cannot update order: restaurant data or customer ID not available"
-                    );
-                    await recordCallEnd("failed"); // Failed to update order
-                  }
-                  setTimeout(() => {
-                    endCall(connection);
-                  }, 7000);
-                  break;
-                case "get_caller_name":
-                  console.log("👤 Handling get_caller_name with data:", args);
-                  if (restaurantData && restaurantData.userId) {
-                    try {
-                      const customer = await getCallerName(
-                        args.caller_name,
-                        callerNumber,
-                        restaurantData.userId
-                      );
-                      customerId = customer?.id || null; // Store the customer ID for use in orders
-                      // Update restaurantData with the new customer data
-                      if (restaurantData) {
-                        restaurantData.customerData = customer;
-                      }
-                      console.log(
-                        `[OpenAI] Customer record processed for: ${args.caller_name} (ID: ${customerId})`
-                      );
-                      // After capturing caller name, inject a short system context to avoid repeating greeting
-                      const contextAfterName = {
-                        type: "conversation.item.create",
-                        item: {
-                          type: "message",
-                          role: "user",
-                          content: [
-                            {
-                              type: "input_text",
-                              text: "[SYSTEM CONTEXT]: You have captured the caller's name. Do not repeat the full initial greeting again. Proceed by asking what they'd like to order or how you can help, referencing the menu if useful.",
-                            },
-                          ],
-                        },
-                      };
-                      if (openAiWs.readyState === WebSocket.OPEN) {
-                        openAiWs.send(JSON.stringify(contextAfterName));
-                      } else {
-                        console.warn("[WebSocket] Cannot send context after name: WebSocket not open (state:", openAiWs.readyState, ")");
-                      }
-                    } catch (error) {
-                      console.error(
-                        `[OpenAI] Error processing caller name: ${error.message}`
-                      );
-                    }
-                  } else {
-                    console.error(
-                      "[OpenAI] Cannot process caller name: restaurant data not available"
-                    );
-                  }
-                  break;
-                case "update_caller_name":
-                  console.log("✏️ Handling update_caller_name with data:", args);
-                  if (customerId && restaurantData && restaurantData.userId) {
-                    try {
-                      const updatedCustomer = await updateCallerName(
-                        customerId,
-                        args.new_name
-                      );
-                      // Update restaurantData with the updated customer data
-                      if (restaurantData) {
-                        restaurantData.customerData = updatedCustomer;
-                      }
-                      console.log(
-                        `[OpenAI] Customer name updated to: ${args.new_name} (ID: ${customerId})`
-                      );
-                      // Inject context to inform AI about the name change
-                      const contextAfterNameUpdate = {
-                        type: "conversation.item.create",
-                        item: {
-                          type: "message",
-                          role: "user",
-                          content: [
-                            {
-                              type: "input_text",
-                              text: `[SYSTEM CONTEXT]: The caller's name has been updated to "${args.new_name}". Use this name for the rest of the conversation.`,
-                            },
-                          ],
-                        },
-                      };
-                      if (openAiWs.readyState === WebSocket.OPEN) {
-                        openAiWs.send(JSON.stringify(contextAfterNameUpdate));
-                      } else {
-                        console.warn("[WebSocket] Cannot send context after name update: WebSocket not open (state:", openAiWs.readyState, ")");
-                      }
-                    } catch (error) {
-                      console.error(
-                        `[OpenAI] Error updating caller name: ${error.message}`
-                      );
-                      // Don't break the conversation flow if name update fails
-                    }
-                  } else {
-                    console.error(
-                      "[OpenAI] Cannot update caller name: customer ID or restaurant data not available"
-                    );
-                  }
-                  break;
-                default:
-                  console.log("❓ Unknown function call:", response.name);
-              }
-            } catch (e) {
-              console.error("❌ Error parsing function call arguments:", e.message);
-              console.error("❌ Raw arguments that failed:", response.arguments);
-              
-              // For handle_finish, we can't proceed without valid arguments
-              if (response.name === "handle_finish") {
-                console.error("❌ Cannot handle finish without valid order data");
-                // Record call as failed since we can't complete the order
-                await recordCallEnd("failed");
-                setTimeout(() => {
-                  endCall(connection);
-                }, 3000);
-                return;
-              }
-              
-              // For other functions, we might be able to continue
-              console.error("❌ Skipping function call due to parsing error");
-            }
-            // After handling a function call, prompt the model to continue its turn
-            try {
-              if (openAiWs.readyState === WebSocket.OPEN) {
-                openAiWs.send(JSON.stringify({ type: "response.create" }));
-              }
-            } catch (err) {
-              console.error("[OpenAI] Failed to request next response:", err);
-            }
-          }
-        } catch (error) {
-          console.error(
-            "[WebSocket] Error processing OpenAI message:",
-            error.message,
-            error.stack
-          );
-          console.error("[WebSocket] Raw message (first 500 chars):", 
-            data?.toString?.()?.substring(0, 500) || "No data"
-          );
-          
-          // Try to recover by requesting a new response if the connection is still open
-          if (openAiWs.readyState === WebSocket.OPEN) {
-            try {
-              console.log("[WebSocket] Attempting to recover by requesting new response");
-              openAiWs.send(JSON.stringify({ type: "response.create" }));
-            } catch (recoveryError) {
-              console.error("[WebSocket] Recovery attempt failed:", recoveryError.message);
-            }
-          }
-        }
-      });
+      // Note: OpenAI WebSocket message handler is set up in createAndSetupOpenAIWebSocket()
+      // No need to set it up here since openAiWs is null until the stream starts
 
       connection.on("message", async (message) => {
         try {
@@ -884,14 +1018,24 @@ export const setupOpenAIWebSocket = (fastify) => {
                 
                 latestMediaTimestamp = data.media.timestamp || latestMediaTimestamp;
 
-                if (openAiWs.readyState === WebSocket.OPEN) {
-                  const audioAppend = {
-                    type: "input_audio_buffer.append",
-                    audio: data.media.payload,
-                  };
+                const audioAppend = {
+                  type: "input_audio_buffer.append",
+                  audio: data.media.payload,
+                };
+
+                if (openAiWs && openAiWs.readyState === WebSocket.OPEN) {
                   openAiWs.send(JSON.stringify(audioAppend));
                 } else {
-                  console.warn("[Twilio] Cannot append audio: OpenAI WebSocket not open (state:", openAiWs.readyState, ")");
+                  // Buffer audio if WebSocket isn't ready yet (only buffer first 50 chunks to prevent memory issues)
+                  if (audioBuffer.length < 50) {
+                    audioBuffer.push(audioAppend);
+                    if (audioBuffer.length === 1) {
+                      console.log("[Twilio] Buffering audio until OpenAI WebSocket is ready...");
+                    }
+                  } else if (audioBuffer.length === 50) {
+                    console.warn("[Twilio] Audio buffer full. Dropping audio chunks until WebSocket is ready.");
+                  }
+                  // Don't log every single buffer message - too noisy
                 }
               } catch (mediaError) {
                 console.error("[Twilio] Error handling media event:", mediaError.message);
@@ -904,6 +1048,32 @@ export const setupOpenAIWebSocket = (fastify) => {
               responseStartTimestampTwilio = null;
               latestMediaTimestamp = 0;
               callStartTime = Date.now(); // Record call start time
+              isSessionInitialized = false; // Reset for new call
+              hasSentInitialGreeting = false; // Reset for new call
+              connectionRetryCount = 0; // Reset retry count for new call
+
+              console.log(`[Twilio] Stream started - CallSid: ${callSid}, Caller: ${callerNumber}`);
+
+              // Create OpenAI WebSocket connection now that we have a call
+              if (!openAiWs || openAiWs.readyState === WebSocket.CLOSED || openAiWs.readyState === WebSocket.CLOSING) {
+                console.log("[WebSocket] Creating OpenAI WebSocket connection for new call...");
+                openAiWs = createAndSetupOpenAIWebSocket();
+                
+                if (!openAiWs) {
+                  console.error("[WebSocket] CRITICAL: Failed to create OpenAI WebSocket connection. Call cannot proceed.");
+                  // Send error message to caller via Twilio
+                  connection.send(JSON.stringify({
+                    event: "media",
+                    streamSid: streamSid,
+                    media: {
+                      payload: Buffer.from("Sorry, we are experiencing technical difficulties. Please try again later.").toString("base64"),
+                    },
+                  }));
+                  return;
+                }
+              } else {
+                console.log(`[WebSocket] OpenAI WebSocket already exists. State: ${openAiWs.readyState}`);
+              }
 
               // Retrieve restaurant data from server-side cache using CallSid
               try {
@@ -937,34 +1107,54 @@ export const setupOpenAIWebSocket = (fastify) => {
               pendingOrders = await getTodayOrdersByPhone(callerNumber);
 
               // Initialize session with restaurant data
-              console.log(`[WebSocket] OpenAI WebSocket state: ${openAiWs.readyState} (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)`);
+              console.log(`[WebSocket] OpenAI WebSocket state: ${openAiWs ? openAiWs.readyState : 'NULL'} (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)`);
               
-              if (openAiWs.readyState === WebSocket.OPEN) {
-                console.log(`[WebSocket] OpenAI is ready, initializing session in 100ms`);
-                setTimeout(() => {
+              // Wait for WebSocket to be ready, then initialize
+              const attemptInitialization = () => {
+                if (!openAiWs) {
+                  console.error("[WebSocket] OpenAI WebSocket is null. Cannot initialize session.");
+                  // Try creating it again
+                  openAiWs = createAndSetupOpenAIWebSocket();
+                  if (openAiWs) {
+                    setTimeout(attemptInitialization, 500);
+                  }
+                  return;
+                }
+                
+                if (openAiWs.readyState === WebSocket.OPEN && !isSessionInitialized) {
+                  console.log(`[WebSocket] OpenAI is ready, initializing session`);
                   initializeSession();
+                  isSessionInitialized = true;
                   // Send previous order context after session is initialized
                   setTimeout(() => {
                     sendPreviousOrderContext(pendingOrders);
-                  }, 200);
-                }, 100);
-              } else {
-                console.log(`[WebSocket] OpenAI not ready yet, will initialize when connection opens`);
-                // Wait for OpenAI WebSocket to open, then initialize
-                const initWhenReady = () => {
-                  if (openAiWs.readyState === WebSocket.OPEN) {
-                    console.log(`[WebSocket] OpenAI now ready, initializing session`);
-                    initializeSession();
-                    setTimeout(() => {
-                      sendPreviousOrderContext(pendingOrders);
-                    }, 200);
+                  }, 500);
+                } else if (openAiWs.readyState === WebSocket.CONNECTING) {
+                  console.log(`[WebSocket] OpenAI still connecting (state: ${openAiWs.readyState}), will retry in 300ms...`);
+                  setTimeout(attemptInitialization, 300);
+                } else if (openAiWs.readyState === WebSocket.CLOSED || openAiWs.readyState === WebSocket.CLOSING) {
+                  console.error(`[WebSocket] OpenAI WebSocket is closed/closing (state: ${openAiWs.readyState}). Attempting to reconnect...`);
+                  // Try to recreate the WebSocket connection
+                  if (connectionRetryCount < maxRetries) {
+                    connectionRetryCount++;
+                    console.log(`[WebSocket] Recreating WebSocket connection (attempt ${connectionRetryCount}/${maxRetries})...`);
+                    openAiWs = createAndSetupOpenAIWebSocket();
+                    if (openAiWs) {
+                      // Wait a bit for connection to establish
+                      setTimeout(attemptInitialization, 1000);
+                    }
                   } else {
-                    console.log(`[WebSocket] Still waiting for OpenAI... (state: ${openAiWs.readyState})`);
-                    // setTimeout(initWhenReady, 100);
+                    console.error("[WebSocket] Max retries reached. Cannot initialize session.");
                   }
-                };
-                // setTimeout(initWhenReady, 100);
-              }
+                } else {
+                  console.warn(`[WebSocket] Unexpected WebSocket state: ${openAiWs.readyState}. Will retry in 500ms...`);
+                  setTimeout(attemptInitialization, 500);
+                }
+              };
+              
+              // Start attempting initialization immediately
+              console.log(`[WebSocket] Starting initialization attempt. Current WebSocket state: ${openAiWs ? openAiWs.readyState : 'NULL'}`);
+              attemptInitialization();
               break;
             case "mark":
               if (markQueue.length > 0) {
@@ -999,17 +1189,10 @@ export const setupOpenAIWebSocket = (fastify) => {
         if (callStartTime) {
           await recordCallEnd("failed");
         }
-        if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
-      });
-
-      openAiWs.on("close", () => {
-        console.log("[WebSocket] Disconnected from OpenAI Realtime API");
-      });
-
-      openAiWs.on("error", (error) => {
-        console.error(`[WebSocket] OpenAI WebSocket error:`, error.message, error.stack);
-        // Try to reconnect or notify about the error
-        // The connection.on("close") handler will record the call as failed
+        // Close OpenAI WebSocket if it exists and is open
+        if (openAiWs && openAiWs.readyState === WebSocket.OPEN) {
+          openAiWs.close();
+        }
       });
       
       // Add error handler for Twilio connection
