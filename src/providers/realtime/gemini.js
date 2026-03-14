@@ -77,7 +77,7 @@ export function handleGeminiSession(twilioWs, session) {
     console.log(`[Gemini] Connected for call ${callSid}`);
 
     const systemPrompt = generateSystemPrompt(session);
-    const tools        = buildTools(session.workflows?.[0]?.type || 'ordering');
+    const tools        = buildTools(session.workflows?.[0]?.type || 'ordering', session.aiConfig);
 
     // BidiGenerateContentSetup
     geminiWs.send(JSON.stringify({

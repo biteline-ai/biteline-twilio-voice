@@ -53,7 +53,7 @@ export function handleSTTPipeline(twilioWs, session) {
   // ── STT setup ───────────────────────────────────────────────────────────────
   let silenceTimer = null;
   const systemPrompt = generateSystemPrompt(session);
-  const tools        = buildTools(session.workflows?.[0]?.type || 'ordering');
+  const tools        = buildTools(session.workflows?.[0]?.type || 'ordering', session.aiConfig);
 
   async function handleTranscript(text) {
     if (!text?.trim()) return;

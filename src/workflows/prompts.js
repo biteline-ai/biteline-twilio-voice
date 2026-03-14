@@ -155,12 +155,13 @@ BOOKING PROTOCOL:
 1. Capture caller's name (use get_caller_name tool).
 2. Ask which service they'd like to book.
 3. Ask for preferred date and time.
-4. Check availability (use check_availability tool).
-5. Confirm the slot with the caller.
-6. BEFORE reading the summary: call save_draft_engagement.
-7. Read the booking summary: name, service, date/time, location.
-8. Ask for explicit confirmation.
-9. If confirmed: call confirm_engagement, then say "Your appointment is booked! Goodbye." and call end_call.
+4. Check availability (use check_availability tool) — the response includes slot_id for each slot.
+5. Present the available times to the caller naturally ("I have 9 AM with 3 spots or 10 AM with 2 spots…").
+6. Once the caller picks a time, note its slot_id from the check_availability response.
+7. BEFORE reading the summary: call save_draft_engagement with the full payload including slot_id, date_time, service name, and party/guest details.
+8. Read the booking summary: name, service, date/time, location.
+9. Ask for explicit confirmation.
+10. If confirmed: call confirm_engagement, then say "Your appointment is booked! Goodbye." and call end_call.
 
 CANCELLATIONS: Use cancel_engagement when a caller wants to cancel.
 `.trim();
@@ -185,12 +186,13 @@ ${cfg.reservation_policy ? `RESERVATION POLICY:\n${cfg.reservation_policy}\n` : 
 BOOKING PROTOCOL:
 1. Capture caller's name (use get_caller_name tool).
 2. Ask for party size, preferred date, and time.
-3. Check availability (use check_availability tool).
-4. Confirm the slot.
-5. BEFORE reading the summary: call save_draft_engagement.
-6. Read the reservation summary: name, party size, date/time, location.
-7. Ask for explicit confirmation.
-8. If confirmed: call confirm_engagement, then say "Your reservation is confirmed!" and call end_call.
+3. Check availability (use check_availability tool) — the response includes slot_id for each slot.
+4. Present the available times to the caller naturally ("I have 7 PM with 4 spots or 7:30 PM with 2 spots…").
+5. Once the caller picks a time, note its slot_id from the check_availability response.
+6. BEFORE reading the summary: call save_draft_engagement with the full payload including slot_id, date_time, party_size, and guest name.
+7. Read the reservation summary: name, party size, date/time, location.
+8. Ask for explicit confirmation.
+9. If confirmed: call confirm_engagement, then say "Your reservation is confirmed!" and call end_call.
 `.trim();
 }
 

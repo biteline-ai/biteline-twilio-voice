@@ -232,12 +232,21 @@ const TOOL_SETS = {
 };
 
 /**
- * Return the OpenAI Realtime tool list for a given workflow type.
- * Defaults to COMMON tools if type is unknown.
+ * Return the tool list for a given workflow type and ai_config flags.
  *
- * @param {string} workflowType - 'ordering' | 'appointment' | 'reservation' | 'quote'
+ * @param {string}  workflowType        - 'ordering' | 'appointment' | 'reservation' | 'quote'
+ * @param {object}  [aiConfig={}]       - Business ai_config row
+ * @param {boolean} [aiConfig.draft_engagement_enabled] - When false, removes the three draft/confirm/cancel tools
  * @returns {Array}
  */
-export function buildTools(workflowType) {
-  return TOOL_SETS[workflowType] ?? COMMON;
+export function buildTools(workflowType, aiConfig = {}) {
+  let tools = TOOL_SETS[workflowType] ?? COMMON;
+
+  // Remove draft lifecycle tools when draft_engagement_enabled is explicitly false
+  if (aiConfig.draft_engagement_enabled === false) {
+    const draftTools = new Set(['save_draft_engagement', 'confirm_engagement', 'cancel_engagement', 'update_draft_order']);
+    tools = tools.filter((t) => !draftTools.has(t.name));
+  }
+
+  return tools;
 }
