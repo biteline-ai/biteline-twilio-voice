@@ -22,6 +22,7 @@ import {
 } from '../services/sms.js';
 import { query } from '../db/pool.js';
 import twilio from 'twilio';
+import { search as knSearch, syncEngagement } from '../services/knowledgeNexus.js';
 
 const twilioClient = twilio(
   process.env.TWILIO_ACCOUNT_SID,
@@ -133,6 +134,15 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
           }).catch((err) => console.error('[SMS] Booking confirmation failed:', err.message));
         }
 
+        // ── Knowledge Nexus sync (fire-and-forget) ────────────────────────
+        syncEngagement({
+          businessId:   session.businessId,
+          callerPhone:  session.callerPhone,
+          engagement,
+          business:     session.business,
+          workflowType: workflow?.type || 'ordering',
+        }).catch((err) => console.error('[KN] sync failed:', err.message));
+
         return `Engagement confirmed (id: ${engagement.id}).`;
       }
 
@@ -196,6 +206,14 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
           .join(', ');
 
         return `Available slots on ${date}: ${slots}`;
+      }
+
+      // ── Search Knowledge Base ───────────────────────────────────────────────
+      case 'search_knowledge': {
+        const { query: knQuery } = args;
+        if (!knQuery?.trim()) return 'Please provide a search query.';
+        const result = await knSearch(session.businessId, knQuery);
+        return result;
       }
 
       default:
