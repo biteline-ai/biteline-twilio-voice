@@ -1,158 +1,203 @@
-import {
-  getUserIdByPhone,
-  getRestaurantsByUserId,
-  getRestaurantLocationsByRestaurantId,
-  getMenuItemsByRestaurantId,
-  getCustomerNameByUserIdAndPhone,
-} from "../db/supabase.js";
-// import { generateSystemPrompt } from "./openai.js";
+/**
+ * Twilio incoming call route handler.
+ *
+ * When Twilio calls POST /incoming-call:
+ *   1. Look up the business by destination (Twilio) phone number
+ *   2. Load business data: locations, workflows, ai_config, services
+ *   3. Look up or create a customer by caller phone
+ *   4. Check for an active draft engagement (resume-on-callback)
+ *   5. Determine AI pipeline via A/B routing
+ *   6. Create a call record in the DB
+ *   7. Cache all data in the session store (keyed by CallSid)
+ *   8. Return TwiML connecting the call to /media-stream
+ *
+ * If anything fails, falls back to a Twilio Studio fallback URL or a
+ * graceful "technical difficulties" message.
+ */
 
-// In-memory cache for restaurant data to avoid passing large data via Twilio parameters
-// Key: callSid, Value: restaurantData
-export const restaurantDataCache = new Map();
+import { query }           from '../db/pool.js';
+import { setSession }      from '../sessions/store.js';
+import { createCallRecord } from './calls.js';
+import { getCustomer, getDraftForCaller } from './engagements.js';
 
 /**
- * Fetches complete restaurant data for system prompt generation
- * @param {string} destinationNumber - The destination phone number (Twilio number)
- * @param {string} callerNumber - The caller's phone number
- * @returns {Promise<Object>} - Complete restaurant data object
+ * Register Twilio routes on the Fastify instance.
  */
-export async function fetchRestaurantData(destinationNumber, callerNumber) {
-  try {
-    // console.log("=== Supabase DB Test Logic ===");
+export function setupTwilioRoutes(fastify) {
 
-    // 1. Test getUserIdByPhone
-    const userId = await getUserIdByPhone(destinationNumber);
-    // console.log(`getUserIdByPhone("${destinationNumber}") =>`, userId);
+  fastify.all('/incoming-call', async (request, reply) => {
+    const callerPhone = request.body.From   || request.query.From;
+    const destPhone   = request.body.To     || request.query.To;
+    const callSid     = request.body.CallSid || request.query.CallSid;
 
-    // 2. Test getRestaurantsByUserId
-    if (userId) {
-      const effectiveUserId = userId;
-      const restaurants = await getRestaurantsByUserId(effectiveUserId);
-      // console.log(
-      //   `getRestaurantsByUserId("${effectiveUserId}") =>\n` +
-      //     JSON.stringify(restaurants, null, 2)
-      // );
+    console.log(`[Twilio] Incoming call from ${callerPhone} → ${destPhone} (${callSid})`);
 
-      // 3. Test getRestaurantLocationsByRestaurantId
-      if (restaurants && restaurants.length > 0) {
-        const restaurantId =
-          restaurants[0].id || restaurants[0].restaurant_id;
-        const [locations, menuItemsByCategory] = await Promise.all([
-          getRestaurantLocationsByRestaurantId(restaurantId),
-          getMenuItemsByRestaurantId(restaurantId),
-        ]);
-        // console.log(
-        //   `getRestaurantLocationsByRestaurantId("${restaurantId}") =>`,
-        //   locations
-        // );
+    try {
+      // ── 1. Look up business by Twilio number ──────────────────────────────
+      // Businesses have their Twilio number stored in businesses.phone
+      const bizResult = await query(
+        `SELECT * FROM businesses WHERE phone = $1 LIMIT 1`,
+        [destPhone]
+      );
 
-        // Build and log full restaurantData used for system prompt
-        let customerData = null;
-        try {
-          customerData = await getCustomerNameByUserIdAndPhone(
-            effectiveUserId,
-            callerNumber
-          );
-        } catch (_) {}
-
-        const primary = restaurants[0];
-        const restaurantData = {
-          userId: effectiveUserId,
-          // Pass full raw restaurant so prompt generator can normalize fields like prep_time and open_time
-          restaurant: primary,
-          locations: locations || [],
-          // [{ category: string, items: [{ name, description, price }] }]
-          menuItems: menuItemsByCategory || [],
-          customerData,
-        };
-
-        // console.log("=== restaurantData for system prompt ===\n" + JSON.stringify(restaurantData, null, 2));
-        // console.log("---------------Generating system prompt-----------------");
-        // console.log("generatedSystemPrompt: ", generateSystemPrompt(restaurantData));
-        
-        // Return the restaurant data
-        return restaurantData;
-      } else {
-        console.log("No restaurants found to test locations.");
-        return null;
+      if (!bizResult.rows[0]) {
+        console.error(`[Twilio] No business found for number: ${destPhone}`);
+        return reply.type('text/xml').send(fallbackTwiML());
       }
+
+      const business   = bizResult.rows[0];
+      const businessId = business.id;
+
+      // ── 2. Load business data in parallel ────────────────────────────────
+      const [locResult, workflowResult, aiResult, svcResult] = await Promise.all([
+        query(
+          `SELECT * FROM business_locations WHERE business_id = $1 AND is_active = true ORDER BY is_primary DESC, name`,
+          [businessId]
+        ),
+        query(
+          `SELECT * FROM workflows WHERE business_id = $1 AND is_active = true ORDER BY created_at`,
+          [businessId]
+        ),
+        query(
+          `SELECT * FROM ai_config WHERE business_id = $1`,
+          [businessId]
+        ),
+        query(
+          `SELECT s.*, sc.name AS category_name
+           FROM services s
+           LEFT JOIN service_categories sc ON sc.id = s.category_id
+           WHERE s.business_id = $1 AND s.is_available = true
+           ORDER BY sc.display_order, s.name`,
+          [businessId]
+        ),
+      ]);
+
+      const locations  = locResult.rows;
+      const workflows  = workflowResult.rows;
+      const aiConfig   = aiResult.rows[0] || {};
+      const services   = svcResult.rows;
+
+      // ── 3. Look up customer + draft ───────────────────────────────────────
+      const [customer, draft] = await Promise.all([
+        getCustomer(businessId, callerPhone).catch(() => null),
+        getDraftForCaller(businessId, callerPhone).catch(() => null),
+      ]);
+
+      if (draft) {
+        console.log(`[Twilio] Draft found for caller — resume-on-callback active (draft ${draft.id})`);
+      }
+
+      // ── 4. A/B pipeline routing ───────────────────────────────────────────
+      // ab_realtime_pct: 0–100 (% of calls sent to realtime pipeline)
+      // Use deterministic hash of CallSid so the same caller always hits
+      // the same pipeline within a session.
+      const abPct    = aiConfig.ab_realtime_pct ?? 100;
+      const hash     = simpleHash(callSid || callerPhone);
+      const pct      = hash % 100;
+      const forcePipeline = aiConfig.pipeline_mode; // 'realtime' | 'stt_llm_tts' | null
+      const pipeline =
+        forcePipeline === 'stt_llm_tts' ? 'stt_llm_tts'
+        : forcePipeline === 'realtime'   ? 'realtime'
+        : pct < abPct                    ? 'realtime'
+        :                                  'stt_llm_tts';
+
+      console.log(`[Twilio] Pipeline: ${pipeline} (A/B: ${pct}/${abPct})`);
+
+      // ── 5. Create call record ─────────────────────────────────────────────
+      const callId = await createCallRecord({
+        callSid,
+        businessId,
+        customerId:  customer?.id || null,
+        callerPhone,
+        pipeline,
+        engagementId: null,
+      }).catch((err) => {
+        console.error('[Twilio] Failed to create call record:', err.message);
+        return null;
+      });
+
+      // ── 6. Store session ──────────────────────────────────────────────────
+      setSession(callSid, {
+        callSid,
+        callId,
+        callerPhone,
+        destPhone,
+        businessId,
+        business,
+        locations,
+        workflows,
+        aiConfig,
+        services,
+        customer,
+        draft,
+        pipeline,
+        startedAt: new Date(),
+      });
+
+      // ── 7. Return TwiML ───────────────────────────────────────────────────
+      // Currently both pipelines land on /media-stream.
+      // The provider layer (openai.js) reads session.pipeline and routes
+      // to the appropriate handler.  When the STT→LLM→TTS pipeline is
+      // implemented it will register its own handler at the same route.
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Pause length="1"/>
+  <Connect>
+    <Stream url="wss://${request.headers.host}/media-stream">
+      <Parameter name="callSid"  value="${callSid}"/>
+      <Parameter name="caller"   value="${callerPhone}"/>
+      <Parameter name="dest"     value="${destPhone}"/>
+    </Stream>
+  </Connect>
+</Response>`;
+
+      return reply.type('text/xml').send(twiml);
+
+    } catch (err) {
+      console.error('[Twilio] Error handling incoming call:', err.message, err.stack);
+      return reply.type('text/xml').send(fallbackTwiML());
     }
-    else {
-      console.log("No userId found to test getRestaurantsByUserId.");
-      return null;
-    }
-  } catch (err) {
-    console.error("Error during Supabase DB test logic:", err);
-    return null;
+  });
+
+  // ── Status callback (optional) ────────────────────────────────────────────
+  // Twilio can post call status updates here; the /api/webhooks/twilio/status
+  // route in biteline-api is the primary handler.  This duplicate handles
+  // cases where the voice server is the configured Status Callback URL.
+  fastify.post('/call-status', async (request, reply) => {
+    const { CallSid, CallStatus, CallDuration } = request.body;
+    console.log(`[Twilio] Status callback: ${CallSid} → ${CallStatus} (${CallDuration}s)`);
+    return reply.send({ ok: true });
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Simple non-cryptographic hash of a string → integer.
+ * Used for deterministic A/B routing by CallSid.
+ */
+function simpleHash(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) {
+    h = ((h << 5) + h) + str.charCodeAt(i);
+    h = h & 0xffffffff;
   }
+  return Math.abs(h);
 }
 
 /**
- * Sets up Twilio routes for handling incoming calls
- * @param {FastifyInstance} fastify - Fastify server instance
+ * TwiML for graceful error fallback.
+ * If a Twilio Studio fallback URL is configured, Twilio will use it.
+ * Otherwise callers hear this message.
  */
-export const setupTwilioRoutes = (fastify) => {
-  // Route for Twilio to handle incoming calls
-  fastify.all("/incoming-call", async (request, reply) => {
-    try {
-      const callerNumber = request.body.From;
-      const destinationNumber = request.body.To;
-      const callSid = request.body.CallSid;
-      
-      console.log(
-        `[Twilio] Incoming call from: ${callerNumber} to: ${destinationNumber}, CallSid: ${callSid}`
-      );
-
-      // Fetch complete restaurant data for system prompt generation
-      const restaurantData = await fetchRestaurantData(
-        destinationNumber,
-        callerNumber
-      );
-
-      // console.log(`[Twilio] Restaurant data fetched successfully:`, restaurantData ? 'Yes' : 'No');
-
-      // Store restaurant data in server-side cache using CallSid as key
-      // This avoids Twilio's parameter size limitations
-      if (callSid) {
-        restaurantDataCache.set(callSid, restaurantData);
-        // console.log(`[Twilio] Cached restaurant data for CallSid: ${callSid}`);
-        
-        // Auto-cleanup cache after 10 minutes to prevent memory leaks
-        setTimeout(() => {
-          restaurantDataCache.delete(callSid);
-          // console.log(`[Twilio] Cleaned up cache for CallSid: ${callSid}`);
-        }, 10 * 60 * 1000);
-      }
-
-      // Generate TwiML response - only pass minimal data via parameters
-      const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-          <Response>
-              <Pause length="1"/>
-              <Connect>
-                  <Stream url="wss://${request.headers.host}/media-stream">
-                    <Parameter name="caller" value="${callerNumber}"/>
-                    <Parameter name="destination" value="${destinationNumber}"/>
-                  </Stream>
-              </Connect>
-          </Response>`;
-
-      // console.log(`[Twilio] Sending TwiML response`);
-      // console.log(`[Twilio] WebSocket URL: wss://${request.headers.host}/media-stream`);
-      
-      reply.type("text/xml").send(twimlResponse);
-    } catch (error) {
-      // console.error(`[Twilio] Error handling incoming call:`, error);
-      // console.error(`[Twilio] Error stack:`, error.stack);
-
-      // Fallback TwiML response in case of error
-      const fallbackResponse = `<?xml version="1.0" encoding="UTF-8"?>
-          <Response>
-              <Say>Sorry, we're experiencing technical difficulties. Please try again later.</Say>
-              <Hangup/>
-          </Response>`;
-
-      reply.type("text/xml").send(fallbackResponse);
-    }
-  });
-};
+function fallbackTwiML() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">
+    We're sorry, we're having technical difficulties. Please try again in a moment, or visit our website for more information.
+  </Say>
+  <Hangup/>
+</Response>`;
+}

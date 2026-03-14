@@ -1,46 +1,25 @@
 {
-  "name": "speech-assistant-openai-realtime-api-node",
-  "version": "1.0.1",
+  "name": "biteline-voice",
+  "version": "2.0.0",
   "type": "module",
-  "description": "",
+  "description": "Biteline AI Voice Server — Twilio Media Streams + multi-provider AI pipeline",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js",
-    "pm2:start": "pm2 start ecosystem.config.cjs",
-    "pm2:start:dev": "pm2 start ecosystem.config.cjs --only twilio-openai-backend-dev",
-    "pm2:start:prod": "pm2 start ecosystem.config.cjs --only twilio-openai-backend-prod",
-    "pm2:stop": "pm2 stop all",
-    "pm2:stop:dev": "pm2 stop twilio-openai-backend-dev",
-    "pm2:stop:prod": "pm2 stop twilio-openai-backend-prod",
-    "pm2:restart": "pm2 restart all",
-    "pm2:restart:dev": "pm2 restart twilio-openai-backend-dev",
-    "pm2:restart:prod": "pm2 restart twilio-openai-backend-prod",
-    "pm2:delete": "pm2 delete all",
-    "pm2:delete:dev": "pm2 delete twilio-openai-backend-dev",
-    "pm2:delete:prod": "pm2 delete twilio-openai-backend-prod",
-    "pm2:logs": "pm2 logs",
-    "pm2:logs:dev": "pm2 logs twilio-openai-backend-dev",
-    "pm2:logs:prod": "pm2 logs twilio-openai-backend-prod",
-    "pm2:status": "pm2 status",
-    "pm2:monit": "pm2 monit",
-    "pm2:flush": "pm2 flush"
+    "dev": "nodemon index.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@fastify/formbody": "^8.0.0",
-    "@fastify/multipart": "^9.0.3",
     "@fastify/websocket": "^11.0.0",
-    "@supabase/supabase-js": "^2.48.1",
     "dotenv": "^16.4.5",
     "fastify": "^5.0.0",
-    "moment-timezone": "^0.5.47",
     "nodemon": "^3.1.9",
     "openai": "^4.78.0",
+    "pg": "^8.13.1",
     "twilio": "^5.4.2",
-    "ws": "^8.18.0",
-    "aws-sdk": "^2.1609.0"
+    "ws": "^8.18.0"
   }
 }
