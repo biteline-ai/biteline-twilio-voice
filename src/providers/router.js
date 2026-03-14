@@ -10,7 +10,7 @@
  *   otherwise                               → OpenAI Realtime
  */
 
-import { getSession }            from '../sessions/store.js';
+import { getSession, loadSession } from '../sessions/store.js';
 import { handleOpenAISession }   from './realtime/openai.js';
 import { handleGeminiSession }   from './realtime/gemini.js';
 import { handleSTTPipeline }     from './stt_llm_tts/pipeline.js';
@@ -20,7 +20,7 @@ export function setupMediaStreamRoute(fastify) {
     console.log('[Router] Twilio media stream connected — waiting for start event');
 
     // Read the first message to determine routing
-    twilioWs.once('message', (raw) => {
+    twilioWs.once('message', async (raw) => {
       let msg;
       try { msg = JSON.parse(raw); } catch { return; }
 
@@ -35,6 +35,9 @@ export function setupMediaStreamRoute(fastify) {
         twilioWs.close();
         return;
       }
+
+      // Ensure session is in local cache (loads from Redis if needed for multi-server deployments)
+      await loadSession(callSid);
 
       const session = getSession(callSid);
       if (!session) {

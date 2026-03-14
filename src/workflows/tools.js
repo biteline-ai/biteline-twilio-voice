@@ -81,13 +81,18 @@ const tool_save_draft = {
     'IMPORTANT: Call this BEFORE reciting the confirmation summary to the caller.',
     'It persists their order/booking to the database so it is safe even if the call drops.',
     'The caller will not know this was called — it is a silent background action.',
+    'For appointment/reservation bookings, always include the slot_id from check_availability in the payload.',
   ].join(' '),
   parameters: {
     type: 'object',
     properties: {
       payload: {
         type: 'object',
-        description: 'The complete engagement data collected so far.',
+        description: [
+          'The complete engagement data collected so far.',
+          'For bookings: include slot_id (from check_availability), date_time, party_size/guest_name/name as applicable.',
+          'For orders: include items array, total, pickup_time.',
+        ].join(' '),
       },
     },
     required: ['payload'],
@@ -162,7 +167,11 @@ const tool_update_order = {
 const tool_check_availability = {
   type: 'function',
   name: 'check_availability',
-  description: 'Check available time slots for a given date and optionally a specific staff member or service.',
+  description: [
+    'Check available time slots for a given date.',
+    'Returns a list of slots, each with a slot_id, time, and open spots.',
+    'When the caller chooses a slot, include that slot_id in the payload when calling save_draft_engagement.',
+  ].join(' '),
   parameters: {
     type: 'object',
     properties: {
