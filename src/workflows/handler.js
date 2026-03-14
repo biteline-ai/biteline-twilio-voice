@@ -134,18 +134,40 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
           }).catch((err) => console.error('[SMS] Booking confirmation failed:', err.message));
         }
 
-        // ── Create reservation record for reservation workflow ────────────────
-        if (workflow?.type === 'reservation') {
-          const p = payload || {};
+        // ── Create reservation record + lock slot for reservation/appointment ─
+        if (['reservation', 'appointment'].includes(workflow?.type)) {
+          const p      = payload || {};
+          const slotId = p.slot_id || null;
+
+          // Lock and increment the slot atomically if slot_id was provided
+          if (slotId) {
+            const slotResult = await query(
+              `UPDATE availability_slots
+               SET booked = booked + 1
+               WHERE id = $1 AND booked < capacity
+               RETURNING id`,
+              [slotId]
+            ).catch((err) => {
+              console.error('[Slot] increment failed:', err.message);
+              return { rows: [] };
+            });
+
+            if (!slotResult.rows.length) {
+              // Slot became full between check and confirm — surface error to AI
+              return 'Sorry, that time slot just became unavailable. Please use check_availability to find another slot.';
+            }
+          }
+
           query(
             `INSERT INTO reservations
-               (business_id, customer_id, engagement_id, caller_phone, guest_name,
+               (business_id, customer_id, slot_id, engagement_id, caller_phone, guest_name,
                 party_size, reserved_for, notes, status)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'confirmed')
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'confirmed')
              ON CONFLICT DO NOTHING`,
             [
               session.businessId,
               session.customer?.id || null,
+              slotId,
               engagement.id,
               session.callerPhone,
               p.name || p.guest_name || null,
@@ -205,29 +227,36 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
       // ── Check Availability ──────────────────────────────────────────────────
       case 'check_availability': {
         const date = resolveDate(args.date);
+        const tz   = session.timezone || 'America/Chicago';
         const result = await query(
-          `SELECT slot_start, slot_end, capacity - booked AS open_spots
+          `SELECT id, slot_start, slot_end, capacity - booked AS open_spots
            FROM availability_slots
            WHERE business_id = $1
              AND DATE(slot_start AT TIME ZONE $2) = $3
              AND booked < capacity
            ORDER BY slot_start
            LIMIT 20`,
-          [session.businessId, session.timezone || 'America/Chicago', date]
+          [session.businessId, tz, date]
         );
 
         if (!result.rows.length) return `No available slots on ${date}.`;
 
-        const slots = result.rows
-          .map((r) => {
-            const t = new Date(r.slot_start).toLocaleTimeString('en-US', {
-              hour: '2-digit', minute: '2-digit', timeZone: session.timezone || 'America/Chicago',
-            });
-            return `${t} (${r.open_spots} spot${r.open_spots !== 1 ? 's' : ''} available)`;
-          })
-          .join(', ');
+        const slots = result.rows.map((r) => {
+          const t = new Date(r.slot_start).toLocaleTimeString('en-US', {
+            hour: '2-digit', minute: '2-digit', timeZone: tz,
+          });
+          return {
+            slot_id:    r.id,
+            time:       t,
+            open_spots: r.open_spots,
+          };
+        });
 
-        return `Available slots on ${date}: ${slots}`;
+        return JSON.stringify({
+          date,
+          message:    `Available slots on ${date}. When the caller picks a time, record the slot_id in the draft payload.`,
+          slots,
+        });
       }
 
       // ── Search Knowledge Base ───────────────────────────────────────────────
