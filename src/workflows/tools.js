@@ -179,6 +179,28 @@ const tool_check_availability = {
   },
 };
 
+// ── Knowledge search tool ─────────────────────────────────────────────────────
+
+const tool_search_knowledge = {
+  type: 'function',
+  name: 'search_knowledge',
+  description: [
+    'Search the business knowledge base for detailed information the caller is asking about.',
+    'Use this when the system prompt does not have enough detail to answer — FAQs, policies, product specs, ingredient lists, etc.',
+    'Do NOT use for availability checks (use check_availability instead).',
+  ].join(' '),
+  parameters: {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Natural-language question to search for.',
+      },
+    },
+    required: ['query'],
+  },
+};
+
 // ── Tool sets per workflow type ───────────────────────────────────────────────
 
 const COMMON = [
@@ -190,6 +212,7 @@ const COMMON = [
   tool_save_draft,
   tool_confirm_engagement,
   tool_cancel_engagement,
+  tool_search_knowledge,
 ];
 
 const TOOL_SETS = {

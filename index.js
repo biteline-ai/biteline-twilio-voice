@@ -15,9 +15,9 @@ import Fastify        from 'fastify';
 import fastifyWs      from '@fastify/websocket';
 import fastifyForm    from '@fastify/formbody';
 
-import { setupTwilioRoutes }    from './src/services/twilio.js';
-import { setupRealtimeProvider } from './src/providers/realtime/openai.js';
-import { sessionCount }          from './src/sessions/store.js';
+import { setupTwilioRoutes }     from './src/services/twilio.js';
+import { setupMediaStreamRoute }  from './src/providers/router.js';
+import { sessionCount }           from './src/sessions/store.js';
 
 const PORT = Number(process.env.PORT) || 6501;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -43,7 +43,7 @@ fastify.get('/health', async () => ({
 }));
 
 setupTwilioRoutes(fastify);
-setupRealtimeProvider(fastify);
+setupMediaStreamRoute(fastify);
 
 // ── Global error handler ────────────────────────────────────────────────────────
 fastify.setErrorHandler((error, request, reply) => {
