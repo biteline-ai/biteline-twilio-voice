@@ -213,7 +213,7 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
              AND booked < capacity
            ORDER BY slot_start
            LIMIT 20`,
-          [session.businessId, session.business?.timezone || 'UTC', date]
+          [session.businessId, session.timezone || 'America/Chicago', date]
         );
 
         if (!result.rows.length) return `No available slots on ${date}.`;
@@ -221,7 +221,7 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
         const slots = result.rows
           .map((r) => {
             const t = new Date(r.slot_start).toLocaleTimeString('en-US', {
-              hour: '2-digit', minute: '2-digit', timeZone: session.business?.timezone || 'UTC',
+              hour: '2-digit', minute: '2-digit', timeZone: session.timezone || 'America/Chicago',
             });
             return `${t} (${r.open_spots} spot${r.open_spots !== 1 ? 's' : ''} available)`;
           })
