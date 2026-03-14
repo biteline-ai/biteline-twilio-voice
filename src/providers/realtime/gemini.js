@@ -20,7 +20,7 @@
  */
 
 import WebSocket from 'ws';
-import { getSession, updateSession, deleteSession } from '../../sessions/store.js';
+import { deleteSession } from '../../sessions/store.js';
 import { generateSystemPrompt } from '../../workflows/prompts.js';
 import { buildTools }           from '../../workflows/tools.js';
 import { dispatch }             from '../../workflows/handler.js';
