@@ -76,9 +76,14 @@ export function setupTwilioRoutes(fastify) {
         await getActiveMenuData(businessId, timezone);
 
       // ── 3. Look up customer + draft ───────────────────────────────────────
+      // Only load the prior draft if resume_on_callback_enabled is true (default: true)
+      const resumeEnabled = aiConfig.resume_on_callback_enabled !== false;
+
       const [customer, draft] = await Promise.all([
         getCustomer(businessId, callerPhone).catch(() => null),
-        getDraftForCaller(businessId, callerPhone).catch(() => null),
+        resumeEnabled
+          ? getDraftForCaller(businessId, callerPhone).catch(() => null)
+          : Promise.resolve(null),
       ]);
 
       if (draft) {

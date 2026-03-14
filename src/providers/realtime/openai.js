@@ -104,7 +104,7 @@ export function handleOpenAISession(twilioWs, session) {
               instructions:   generateSystemPrompt(session),
               modalities:     ['text', 'audio'],
               temperature:    aiConfig.temperature ?? 0.8,
-              tools:          buildTools(workflowType),
+              tools:          buildTools(workflowType, aiConfig),
               tool_choice:    'auto',
             },
           };
