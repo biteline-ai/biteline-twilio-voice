@@ -19,6 +19,7 @@ import { query }           from '../db/pool.js';
 import { setSession }      from '../sessions/store.js';
 import { createCallRecord } from './calls.js';
 import { getCustomer, getDraftForCaller } from './engagements.js';
+import { getActiveMenuData } from './menu.js';
 
 /**
  * Register Twilio routes on the Fastify instance.
@@ -49,7 +50,7 @@ export function setupTwilioRoutes(fastify) {
       const businessId = business.id;
 
       // ── 2. Load business data in parallel ────────────────────────────────
-      const [locResult, workflowResult, aiResult, svcResult] = await Promise.all([
+      const [locResult, workflowResult, aiResult] = await Promise.all([
         query(
           `SELECT * FROM business_locations WHERE business_id = $1 AND is_active = true ORDER BY is_primary DESC, name`,
           [businessId]
@@ -62,20 +63,17 @@ export function setupTwilioRoutes(fastify) {
           `SELECT * FROM ai_config WHERE business_id = $1`,
           [businessId]
         ),
-        query(
-          `SELECT s.*, sc.name AS category_name
-           FROM services s
-           LEFT JOIN service_categories sc ON sc.id = s.category_id
-           WHERE s.business_id = $1 AND s.is_available = true
-           ORDER BY sc.display_order, s.name`,
-          [businessId]
-        ),
       ]);
 
-      const locations  = locResult.rows;
-      const workflows  = workflowResult.rows;
-      const aiConfig   = aiResult.rows[0] || {};
-      const services   = svcResult.rows;
+      const locations = locResult.rows;
+      const workflows = workflowResult.rows;
+      const aiConfig  = aiResult.rows[0] || {};
+
+      // ── 2b. Time-aware menu resolution ───────────────────────────────────
+      // Use the primary location's timezone, or the ai_config timezone, or Central.
+      const timezone = locations[0]?.timezone || aiConfig.timezone || 'America/Chicago';
+      const { menu: activeMenu, services, specials } =
+        await getActiveMenuData(businessId, timezone);
 
       // ── 3. Look up customer + draft ───────────────────────────────────────
       const [customer, draft] = await Promise.all([
@@ -128,6 +126,9 @@ export function setupTwilioRoutes(fastify) {
         workflows,
         aiConfig,
         services,
+        specials,
+        activeMenu,
+        timezone,
         customer,
         draft,
         pipeline,

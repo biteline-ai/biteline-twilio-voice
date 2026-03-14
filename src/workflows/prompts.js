@@ -45,6 +45,14 @@ function formatMenuCategories(services) {
     .join('\n\n');
 }
 
+function formatSpecials(specials) {
+  if (!specials?.length) return '';
+  const lines = specials.map(
+    (s) => `  ★ ${s.name}${s.price ? ` ($${s.price})` : ''}${s.description ? ' — ' + s.description : ''}`
+  ).join('\n');
+  return `TODAY'S SPECIALS:\n${lines}`;
+}
+
 function formatServices(services) {
   if (!services?.length) return 'Contact us for available services.';
   return services
@@ -89,8 +97,10 @@ Greet them warmly, let them know you have their previous session, and ask if the
 
 // ── Vertical-specific prompt builders ─────────────────────────────────────────
 
-function orderingPrompt({ business, locations, services, customer, draft, workflowConfig }) {
+function orderingPrompt({ business, locations, services, specials, activeMenu, customer, draft, workflowConfig }) {
   const cfg = workflowConfig?.config || {};
+  const menuLabel = activeMenu?.name ? `${activeMenu.name} Menu` : 'Menu';
+  const specialsSection = formatSpecials(specials);
   return `
 You are ${business.name}'s AI phone ordering assistant. You help callers place, update, or cancel food orders.
 
@@ -103,8 +113,9 @@ Name: ${business.name}
 Locations:
 ${formatLocations(locations)}
 
-MENU:
+${menuLabel.toUpperCase()}:
 ${formatMenuCategories(services)}
+${specialsSection ? '\n' + specialsSection : ''}
 
 TAX: ${cfg.tax_pct || 0}% added to all orders.
 
@@ -223,7 +234,7 @@ PROTOCOL:
  * @returns {string}
  */
 export function generateSystemPrompt(session) {
-  const { business, locations, services, aiConfig, workflows, customer, draft } = session;
+  const { business, locations, services, specials, activeMenu, aiConfig, workflows, customer, draft } = session;
 
   // Custom prompt override
   if (aiConfig?.system_prompt?.trim()) {
@@ -235,7 +246,7 @@ export function generateSystemPrompt(session) {
   const workflowType = workflow?.type || 'ordering';
   const workflowConfig = workflow;
 
-  const args = { business, locations, services, customer, draft, workflowConfig };
+  const args = { business, locations, services, specials, activeMenu, customer, draft, workflowConfig };
 
   switch (workflowType) {
     case 'ordering':    return orderingPrompt(args);
