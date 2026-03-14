@@ -1,114 +1,65 @@
-import Fastify from "fastify";
-import dotenv from "dotenv";
-import fastifyFormBody from "@fastify/formbody";
-import fastifyWs from "@fastify/websocket";
-import fastifyMultipart from "@fastify/multipart";
-import { setupTwilioRoutes } from "./src/services/twilio.js";
-import { setupOpenAIWebSocket} from "./src/services/openai.js";
+/**
+ * Biteline Voice Server — Entry Point
+ *
+ * Fastify server providing:
+ *   POST /incoming-call    → Twilio Voice webhook (TwiML response)
+ *   GET  /media-stream     → Twilio Media Stream WebSocket → AI provider
+ *   POST /call-status      → Twilio status callback
+ *   GET  /health           → Health check
+ *
+ * Port: 6501 (Biteline 6500-range convention)
+ */
 
-// Load environment variables from .env file
-dotenv.config();
+import 'dotenv/config';
+import Fastify        from 'fastify';
+import fastifyWs      from '@fastify/websocket';
+import fastifyForm    from '@fastify/formbody';
 
-// Initialize Fastify
+import { setupTwilioRoutes }    from './src/services/twilio.js';
+import { setupRealtimeProvider } from './src/providers/realtime/openai.js';
+import { sessionCount }          from './src/sessions/store.js';
+
+const PORT = Number(process.env.PORT) || 6501;
+const HOST = process.env.HOST || '0.0.0.0';
+
 const fastify = Fastify({
-  logger: true,
+  logger: {
+    level: process.env.LOG_LEVEL || 'info',
+    ...(process.env.NODE_ENV === 'development'
+      ? { transport: { target: 'pino-pretty', options: { colorize: true } } }
+      : {}),
+  },
 });
 
-// Register plugins
-fastify.register(fastifyFormBody);
-fastify.register(fastifyWs);
-fastify.register(fastifyMultipart);
+// ── Plugins ────────────────────────────────────────────────────────────────────
+await fastify.register(fastifyForm);
+await fastify.register(fastifyWs);
 
-// Setup Twilio routes
+// ── Routes ─────────────────────────────────────────────────────────────────────
+fastify.get('/health', async () => ({
+  ok:            true,
+  ts:            new Date().toISOString(),
+  activeSessions: sessionCount(),
+}));
+
 setupTwilioRoutes(fastify);
-// Setup OpenAI WebSocket
-setupOpenAIWebSocket(fastify);
+setupRealtimeProvider(fastify);
 
-// Start the server
-const PORT = process.env.PORT || 5050;
-fastify.get("/", (req, res) => {
-  res.send("Hello World");
+// ── Global error handler ────────────────────────────────────────────────────────
+fastify.setErrorHandler((error, request, reply) => {
+  fastify.log.error({ err: error, url: request.url }, 'Unhandled server error');
+  const code = error.statusCode || 500;
+  const msg  = process.env.NODE_ENV === 'production' && code >= 500
+    ? 'Internal server error'
+    : error.message;
+  return reply.code(code).send({ error: msg });
 });
 
-fastify.listen({ port: PORT, host: "0.0.0.0" }, async (err) => {
-  if (err) {
-    console.error(err);
-    process.exit(1);
-  }
-  console.log(`Server is listening on port ${PORT}`);
-  // Simple test logic for Supabase DB functions
-
-  // Run tests after server starts
-  // (async () => {
-  //   try {
-  //     console.log("=== Supabase DB Test Logic ===");
-
-  //     // 1. Test getUserIdByPhone
-  //     const userId = await getUserIdByPhone(testPhone);
-  //     console.log(`getUserIdByPhone("${testPhone}") =>`, userId);
-
-  //     // 2. Test getRestaurantsByUserId
-  //     if (userId || testUserId) {
-  //       const effectiveUserId = userId || testUserId;
-  //       const restaurants = await getRestaurantsByUserId(effectiveUserId);
-  //       console.log(
-  //         `getRestaurantsByUserId("${effectiveUserId}") =>\n` +
-  //           JSON.stringify(restaurants, null, 2)
-  //       );
-
-  //       // 3. Test getRestaurantLocationsByRestaurantId
-  //       if (restaurants && restaurants.length > 0) {
-  //         const restaurantId =
-  //           testRestaurantId || restaurants[0].id || restaurants[0].restaurant_id;
-  //         const [locations, menuItemsByCategory] = await Promise.all([
-  //           getRestaurantLocationsByRestaurantId(restaurantId),
-  //           getMenuItemsByRestaurantId(restaurantId),
-  //         ]);
-  //         console.log(
-  //           `getRestaurantLocationsByRestaurantId("${restaurantId}") =>`,
-  //           locations
-  //         );
-
-  //         // Build and log full restaurantData used for system prompt
-  //         let customerData = null;
-  //         try {
-  //           customerData = await getCustomerNameByUserIdAndPhone(
-  //             effectiveUserId,
-  //             testCallerPhone
-  //           );
-  //         } catch (_) {}
-
-  //         const primary = restaurants[0];
-  //         const restaurantData = {
-  //           userId: effectiveUserId,
-  //           // Pass full raw restaurant so prompt generator can normalize fields like prep_time and open_time
-  //           restaurant: primary,
-  //           locations: locations || [],
-  //           // [{ category: string, items: [{ name, description, price }] }]
-  //           menuItems: menuItemsByCategory || [],
-  //           customerData,
-  //         };
-
-  //         console.log("=== restaurantData for system prompt ===\n" + JSON.stringify(restaurantData, null, 2));
-  //         console.log("---------------Generating system prompt-----------------");
-  //         console.log("generatedSystemPrompt: ", generateSystemPrompt(restaurantData));
-  //       } else if (testRestaurantId) {
-  //         const locations = await getRestaurantLocationsByRestaurantId(
-  //           testRestaurantId
-  //         );
-  //         console.log(
-  //           `getRestaurantLocationsByRestaurantId("${testRestaurantId}") =>`,
-  //           locations
-  //         );
-  //       } else {
-  //         console.log("No restaurants found to test locations.");
-  //       }
-  //     }
-  //     else {
-  //       console.log("No userId found to test getRestaurantsByUserId.");
-  //     }
-  //   } catch (err) {
-  //     console.error("Error during Supabase DB test logic:", err);
-  //   }
-  // })();
-});
+// ── Start ───────────────────────────────────────────────────────────────────────
+try {
+  await fastify.listen({ port: PORT, host: HOST });
+  fastify.log.info(`Biteline Voice Server listening on ${HOST}:${PORT}`);
+} catch (err) {
+  fastify.log.error(err);
+  process.exit(1);
+}
