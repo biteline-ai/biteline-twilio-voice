@@ -134,6 +134,28 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
           }).catch((err) => console.error('[SMS] Booking confirmation failed:', err.message));
         }
 
+        // ── Create reservation record for reservation workflow ────────────────
+        if (workflow?.type === 'reservation') {
+          const p = payload || {};
+          query(
+            `INSERT INTO reservations
+               (business_id, customer_id, engagement_id, caller_phone, guest_name,
+                party_size, reserved_for, notes, status)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'confirmed')
+             ON CONFLICT DO NOTHING`,
+            [
+              session.businessId,
+              session.customer?.id || null,
+              engagement.id,
+              session.callerPhone,
+              p.name || p.guest_name || null,
+              p.party_size || p.guests || 1,
+              p.date_time || p.reserved_for || null,
+              p.notes || p.special_requests || null,
+            ]
+          ).catch((err) => console.error('[Reservations] insert failed:', err.message));
+        }
+
         // ── Knowledge Nexus sync (fire-and-forget) ────────────────────────
         syncEngagement({
           businessId:   session.businessId,
