@@ -21,7 +21,7 @@ import { createCallRecord } from './calls.js';
 import { getCustomer, getDraftForCaller } from './engagements.js';
 import { getActiveMenuData } from './menu.js';
 import { checkBusinessSubscription } from './subscription.js';
-import { acquireCallSlot } from './callLimiter.js';
+import { acquireCallSlot, releaseCallSlot } from './callLimiter.js';
 
 /**
  * Register Twilio routes on the Fastify instance.
@@ -34,6 +34,8 @@ export function setupTwilioRoutes(fastify) {
     const callSid     = request.body.CallSid || request.query.CallSid;
 
     console.log(`[Twilio] Incoming call from ${callerPhone} → ${destPhone} (${callSid})`);
+
+    let acquiredBusinessId = null;  // track so we can release on unexpected error
 
     try {
       // ── 1. Look up business by Twilio number ──────────────────────────────
@@ -64,6 +66,7 @@ export function setupTwilioRoutes(fastify) {
         console.warn(`[Twilio] Blocked — concurrent limit reached for business ${businessId} (plan: ${subCheck.plan})`);
         return reply.type('text/xml').send(callLimitTwiML());
       }
+      acquiredBusinessId = businessId;  // mark: slot is now held, must release on any error
 
       // ── 2. Load business data in parallel ────────────────────────────────
       const [locResult, workflowResult, aiResult] = await Promise.all([
@@ -186,6 +189,10 @@ export function setupTwilioRoutes(fastify) {
 
     } catch (err) {
       console.error('[Twilio] Error handling incoming call:', err.message, err.stack);
+      // Release the call slot if it was acquired before the error — prevents permanent slot leak
+      if (acquiredBusinessId) {
+        releaseCallSlot(acquiredBusinessId).catch(() => {});
+      }
       return reply.type('text/xml').send(fallbackTwiML());
     }
   });
