@@ -243,10 +243,12 @@ export function handleOpenAISession(twilioWs, session) {
         openAiWs.on('close', (code, reason) => {
           isConnected = false;
           console.log(`[OpenAI] WebSocket closed (${code}): ${reason}`);
+          teardown('completed');
         });
 
         openAiWs.on('error', (err) => {
           console.error('[OpenAI] WebSocket error:', err.message);
+          teardown('failed');
         });
 
         break;
