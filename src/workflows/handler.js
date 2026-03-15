@@ -52,7 +52,7 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
 
       // ── Transfer Call ───────────────────────────────────────────────────────
       case 'transfer_call': {
-        const managerPhone = session.business?.phone || process.env.MANAGER_NUMBER;
+        const managerPhone = session.aiConfig?.transfer_number || process.env.MANAGER_NUMBER;
         if (managerPhone && session.callSid) {
           const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial callerId="${session.destPhone}">${managerPhone}</Dial></Response>`;
           await twilioClient.calls(session.callSid).update({ twiml });
@@ -63,6 +63,7 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
 
       // ── Location SMS ────────────────────────────────────────────────────────
       case 'location_sms': {
+        if (session.aiConfig?.sms_enabled === false) return 'SMS is disabled for this business.';
         await sendLocationSMS(session.callerPhone, args.content);
         return 'Location details sent via SMS.';
       }
@@ -119,18 +120,20 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
 
         const businessPhone = session.business?.phone;
 
-        if (workflow?.type === 'ordering') {
-          await sendOrderConfirmation({
-            callerPhone:   session.callerPhone,
-            businessPhone,
-            engagement:    payload,
-          }).catch((err) => console.error('[SMS] Order confirmation failed:', err.message));
-        } else if (['appointment', 'reservation'].includes(workflow?.type)) {
-          await sendBookingConfirmation({
-            callerPhone:   session.callerPhone,
-            businessPhone,
-            engagement:    payload,
-          }).catch((err) => console.error('[SMS] Booking confirmation failed:', err.message));
+        if (session.aiConfig?.sms_enabled !== false) {
+          if (workflow?.type === 'ordering') {
+            await sendOrderConfirmation({
+              callerPhone:   session.callerPhone,
+              businessPhone,
+              engagement:    payload,
+            }).catch((err) => console.error('[SMS] Order confirmation failed:', err.message));
+          } else if (['appointment', 'reservation'].includes(workflow?.type)) {
+            await sendBookingConfirmation({
+              callerPhone:   session.callerPhone,
+              businessPhone,
+              engagement:    payload,
+            }).catch((err) => console.error('[SMS] Booking confirmation failed:', err.message));
+          }
         }
 
         return `Engagement confirmed (id: ${engagement.id}).`;
