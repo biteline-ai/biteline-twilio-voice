@@ -17,8 +17,8 @@ import { deleteSession } from '../../sessions/store.js';
 import { generateSystemPrompt } from '../../workflows/prompts.js';
 import { buildTools }           from '../../workflows/tools.js';
 import { dispatch }             from '../../workflows/handler.js';
-import { closeCallRecord }      from '../../services/calls.js';
-import { releaseCallSlot }      from '../../services/callLimiter.js';
+import { closeCallRecord, saveTranscript } from '../../services/calls.js';
+import { releaseCallSlot }                 from '../../services/callLimiter.js';
 
 const OPENAI_API_KEY     = process.env.OPENAI_API_KEY;
 const OPENAI_REALTIME_URL = 'wss://api.openai.com/v1/realtime';
@@ -38,6 +38,9 @@ export function handleOpenAISession(twilioWs, session) {
   let callStartTime = null;
   let isConnected   = false;
 
+  // Transcript accumulation — [{role, content}]
+  const transcript = [];
+
   // ── Tear-down helper ──────────────────────────────────────────────────────
   let tornDown = false;
   function teardown(status = 'completed') {
@@ -54,6 +57,8 @@ export function handleOpenAISession(twilioWs, session) {
         durationSeconds: duration,
         engagementId: session.engagement?.id || null,
       }).catch((err) => console.error('[OpenAI] Error closing call record:', err.message));
+      saveTranscript(session.callId, session.businessId, transcript)
+        .catch((err) => console.error('[OpenAI] saveTranscript error:', err.message));
     }
 
     releaseCallSlot(session?.businessId)
@@ -106,9 +111,10 @@ export function handleOpenAISession(twilioWs, session) {
           const sessionConfig = {
             type:  'session.update',
             session: {
-              turn_detection:     { type: 'server_vad' },
-              input_audio_format:  'g711_ulaw',
-              output_audio_format: 'g711_ulaw',
+              turn_detection:             { type: 'server_vad' },
+              input_audio_format:          'g711_ulaw',
+              output_audio_format:         'g711_ulaw',
+              input_audio_transcription:  { model: 'whisper-1' },
               voice,
               instructions:   generateSystemPrompt(session),
               modalities:     ['text', 'audio'],
@@ -188,9 +194,22 @@ export function handleOpenAISession(twilioWs, session) {
               console.log(`[OpenAI] Session created: ${oaiMsg.session?.id}`);
               break;
 
-            case 'conversation.item.input_audio_transcription.completed':
-              console.log(`[OpenAI] Caller said: "${oaiMsg.transcript}"`);
+            case 'response.audio_transcript.done': {
+              const text = oaiMsg.transcript?.trim();
+              if (text) {
+                transcript.push({ role: 'assistant', content: text });
+              }
               break;
+            }
+
+            case 'conversation.item.input_audio_transcription.completed': {
+              const text = oaiMsg.transcript?.trim();
+              console.log(`[OpenAI] Caller said: "${text}"`);
+              if (text) {
+                transcript.push({ role: 'user', content: text });
+              }
+              break;
+            }
 
             case 'error':
               console.error('[OpenAI] API error:', oaiMsg.error);

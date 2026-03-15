@@ -44,3 +44,26 @@ export async function closeCallRecord(callId, { status, durationSeconds, engagem
     [status, durationSeconds, engagementId, callId]
   );
 }
+
+/**
+ * Persist a call transcript.  Safe to call multiple times — upserts by call_id.
+ *
+ * @param {string} callId
+ * @param {string} businessId
+ * @param {Array<{role: string, content: string}>} messages
+ */
+export async function saveTranscript(callId, businessId, messages) {
+  if (!callId || !businessId || !messages?.length) return;
+  try {
+    await query(
+      `INSERT INTO call_transcripts (call_id, business_id, messages)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (call_id) DO UPDATE
+         SET messages   = $3,
+             updated_at = now()`,
+      [callId, businessId, JSON.stringify(messages)]
+    );
+  } catch (err) {
+    console.error('[Calls] saveTranscript error:', err.message);
+  }
+}
