@@ -51,7 +51,9 @@ function localTimeParts(timezone) {
  *   3. null (fall through → load all available services)
  */
 export async function getActiveMenuData(businessId, timezone = 'America/Chicago') {
-  const { dow, timeStr } = localTimeParts(timezone);
+  let tz = timezone;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); } catch { tz = 'UTC'; }
+  const { dow, timeStr } = localTimeParts(tz);
 
   // 1. Scheduled match
   const scheduled = await query(
