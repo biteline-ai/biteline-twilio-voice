@@ -128,25 +128,36 @@ export function handleSTTPipeline(twilioWs, session) {
     }
   }
 
+  // Early-exit helper: closes WS and releases all resources before event handlers
+  // are registered (teardown cannot be used here since stt is not yet defined).
+  function earlyExit(msg) {
+    console.error(msg);
+    twilioWs.close();
+    if (session?.callId) {
+      closeCallRecord(session.callId, { status: 'failed', durationSeconds: 0 })
+        .catch((err) => console.error('[STT→LLM→TTS] closeCallRecord (earlyExit):', err.message));
+    }
+    releaseCallSlot(session?.businessId)
+      .catch((err) => console.error('[STT→LLM→TTS] releaseCallSlot (earlyExit):', err.message));
+    deleteSession(callSid);
+  }
+
   // ── STT instance ─────────────────────────────────────────────────────────────
   const sttApiKey = process.env[`${sttProvider.toUpperCase()}_API_KEY`];
   if (!sttApiKey) {
-    console.error(`[STT→LLM→TTS] Missing API key: ${sttProvider.toUpperCase()}_API_KEY — call cannot be processed`);
-    twilioWs.close();
+    earlyExit(`[STT→LLM→TTS] Missing API key: ${sttProvider.toUpperCase()}_API_KEY — call cannot be processed`);
     return;
   }
 
   const llmApiKey = process.env[`${llmProvider.toUpperCase()}_API_KEY`];
   if (!llmApiKey) {
-    console.error(`[STT→LLM→TTS] Missing API key: ${llmProvider.toUpperCase()}_API_KEY — call cannot be processed`);
-    twilioWs.close();
+    earlyExit(`[STT→LLM→TTS] Missing API key: ${llmProvider.toUpperCase()}_API_KEY — call cannot be processed`);
     return;
   }
 
   const ttsApiKey = process.env[`${ttsProvider.toUpperCase()}_API_KEY`];
   if (!ttsApiKey) {
-    console.error(`[STT→LLM→TTS] Missing API key: ${ttsProvider.toUpperCase()}_API_KEY — call cannot be processed`);
-    twilioWs.close();
+    earlyExit(`[STT→LLM→TTS] Missing API key: ${ttsProvider.toUpperCase()}_API_KEY — call cannot be processed`);
     return;
   }
 
