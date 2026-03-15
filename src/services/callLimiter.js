@@ -54,15 +54,19 @@ export async function acquireCallSlot(businessId, plan) {
 
   if (redis) {
     try {
-      const key   = `biteline:calls:${businessId}`;
-      const count = await redis.incr(key);
-      // Safety-net TTL: if a release is missed the counter resets in 1 hour
-      if (count === 1) await redis.expire(key, 3_600);
-      if (count > limit) {
-        await redis.decr(key);
-        return false;
-      }
-      return true;
+      const key = `biteline:calls:${businessId}`;
+      // Atomic check-and-increment: only INCR if count is currently below limit.
+      // Avoids a phantom increment that would be unrecoverable if the subsequent
+      // decrement fails (which leaves the counter stuck high until the 1h TTL fires).
+      const acquired = await redis.eval(
+        `local c = tonumber(redis.call('GET', KEYS[1]) or '0')
+         if c >= tonumber(ARGV[1]) then return 0 end
+         local n = redis.call('INCR', KEYS[1])
+         if n == 1 then redis.call('EXPIRE', KEYS[1], 3600) end
+         return 1`,
+        1, key, String(limit)
+      );
+      return acquired === 1;
     } catch (err) {
       console.error('[CallLimiter] Redis error — falling through to in-memory:', err.message);
     }
