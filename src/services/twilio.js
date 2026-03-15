@@ -164,11 +164,17 @@ export function setupTwilioRoutes(fastify) {
       // The provider layer (openai.js) reads session.pipeline and routes
       // to the appropriate handler.  When the STT→LLM→TTS pipeline is
       // implemented it will register its own handler at the same route.
+      //
+      // Use PUBLIC_URL env var so the Stream URL is correct behind a reverse
+      // proxy or load balancer.  Falls back to the Host header when not set.
+      const publicHost = process.env.PUBLIC_URL
+        ? process.env.PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/$/, '')
+        : request.headers.host;
       const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Pause length="1"/>
   <Connect>
-    <Stream url="wss://${request.headers.host}/media-stream">
+    <Stream url="wss://${publicHost}/media-stream">
       <Parameter name="callSid"  value="${callSid}"/>
       <Parameter name="caller"   value="${callerPhone}"/>
       <Parameter name="dest"     value="${destPhone}"/>
