@@ -173,17 +173,27 @@ export function handleGeminiSession(twilioWs, session) {
         pendingFnId = id;
         console.log(`[Gemini] Tool call: ${name}`, args);
 
-        const result = await dispatch(callSid, name, args || {}, { endCallFn: endCall });
+        let result;
+        try {
+          result = await dispatch(callSid, name, args || {}, { endCallFn: endCall });
+        } catch (err) {
+          console.error(`[Gemini] dispatch error for ${name}:`, err.message);
+          result = `Error: ${err.message}`;
+        }
 
-        geminiWs.send(JSON.stringify({
-          toolResponse: {
-            functionResponses: [{
-              id,
-              name,
-              response: { output: result },
-            }],
-          },
-        }));
+        if (geminiWs?.readyState === WebSocket.OPEN) {
+          geminiWs.send(JSON.stringify({
+            toolResponse: {
+              functionResponses: [{
+                id,
+                name,
+                response: { output: result },
+              }],
+            },
+          }));
+        } else {
+          console.warn(`[Gemini] Cannot send tool response for ${name} — WebSocket not open`);
+        }
       }
     }
 
@@ -195,6 +205,8 @@ export function handleGeminiSession(twilioWs, session) {
 
   geminiWs.on('error', (err) => {
     console.error(`[Gemini] WS error for ${callSid}:`, err.message);
+    audioBacklog.length = 0;
+    teardown('failed');
   });
 
   geminiWs.on('close', () => {
@@ -213,10 +225,12 @@ export function handleGeminiSession(twilioWs, session) {
 
     if (msg.event === 'media') {
       const payload = msg.media?.payload;
-      if (!payload) break;
+      if (!payload) return;
       if (!geminiReady) {
         // Buffer until setup is acknowledged — prevents audio arriving before session is configured
-        audioBacklog.push(payload);
+        if (audioBacklog.length < 1000) {
+          audioBacklog.push(payload);
+        }
       } else if (geminiWs?.readyState === WebSocket.OPEN) {
         geminiWs.send(JSON.stringify({
           realtimeInput: { mediaChunks: [{ mimeType: 'audio/mulaw;rate=8000', data: payload }] },
