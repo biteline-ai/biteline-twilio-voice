@@ -179,10 +179,6 @@ const tool_check_availability = {
         type: 'string',
         description: "Date to check in YYYY-MM-DD format, or 'today', 'tomorrow'.",
       },
-      service_name: {
-        type: 'string',
-        description: 'Name of the service/appointment type requested (optional).',
-      },
     },
     required: ['date'],
   },

@@ -17,6 +17,13 @@
 
 import { getRedis } from '../sessions/store.js';
 
+if (!process.env.REDIS_URL) {
+  console.warn(
+    '[CallLimiter] REDIS_URL not set — concurrent call limits are per-instance only. ' +
+    'Multi-instance deployments will NOT share call counts; limits will not be enforced across nodes.'
+  );
+}
+
 const LIMITS = {
   trialing:    2,
   starter:     3,

@@ -29,7 +29,7 @@ import { createSTT }                 from './stt.js';
 import { complete as llmComplete }   from './llm.js';
 import { synthesize as ttsSynth }    from './tts.js';
 
-const MAX_AUDIO_BUFFER_MS  = 30_000; // 30s max before forced flush
+const MAX_AUDIO_BUFFER_MS  = 30_000; // 30s max before forced flush (non-stop talker)
 const SILENCE_TIMEOUT_MS   = 800;    // wait 800ms after last audio before sending to Whisper
 
 /**
@@ -52,7 +52,9 @@ export function handleSTTPipeline(twilioWs, session) {
   const messages = [];
 
   // ── STT setup ───────────────────────────────────────────────────────────────
-  let silenceTimer = null;
+  let silenceTimer    = null;
+  let maxBufferTimer  = null;
+  let bufferStartTime = null;
   const systemPrompt = generateSystemPrompt(session);
   const tools        = buildTools(session.activeWorkflow?.type || 'ordering', session.aiConfig);
 
@@ -134,12 +136,30 @@ export function handleSTTPipeline(twilioWs, session) {
   // For batch STT (groq/openai), we use silence detection to trigger transcription
   const isBatchSTT = sttProvider !== 'deepgram';
 
+  async function flushBatchSTT() {
+    bufferStartTime = null;
+    if (silenceTimer)   { clearTimeout(silenceTimer);   silenceTimer   = null; }
+    if (maxBufferTimer) { clearTimeout(maxBufferTimer); maxBufferTimer = null; }
+    const text = await stt.transcribe?.();
+    if (text) handleTranscript(text);
+  }
+
   function scheduleSilenceFlush() {
     if (!isBatchSTT) return;
+
+    // Start the absolute-max-buffer timer the first time audio arrives in a turn
+    if (!bufferStartTime) {
+      bufferStartTime = Date.now();
+      maxBufferTimer  = setTimeout(() => {
+        console.log('[STT→LLM→TTS] Max audio buffer reached — forcing flush');
+        flushBatchSTT().catch((err) => console.error('[STT→LLM→TTS] maxBuffer flush error:', err.message));
+      }, MAX_AUDIO_BUFFER_MS);
+    }
+
+    // Normal silence-detection timer (resets on every new audio packet)
     if (silenceTimer) clearTimeout(silenceTimer);
-    silenceTimer = setTimeout(async () => {
-      const text = await stt.transcribe?.();
-      if (text) handleTranscript(text);
+    silenceTimer = setTimeout(() => {
+      flushBatchSTT().catch((err) => console.error('[STT→LLM→TTS] silence flush error:', err.message));
     }, SILENCE_TIMEOUT_MS);
   }
 
@@ -174,7 +194,8 @@ export function handleSTTPipeline(twilioWs, session) {
     if (tornDown) return;
     tornDown = true;
 
-    if (silenceTimer) clearTimeout(silenceTimer);
+    if (silenceTimer)   clearTimeout(silenceTimer);
+    if (maxBufferTimer) clearTimeout(maxBufferTimer);
     stt.close?.();
     const duration = Math.round((Date.now() - callStartTime) / 1000);
     const sess = getSession(callSid);
