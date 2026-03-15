@@ -136,6 +136,20 @@ export function handleSTTPipeline(twilioWs, session) {
     return;
   }
 
+  const llmApiKey = process.env[`${llmProvider.toUpperCase()}_API_KEY`];
+  if (!llmApiKey) {
+    console.error(`[STT→LLM→TTS] Missing API key: ${llmProvider.toUpperCase()}_API_KEY — call cannot be processed`);
+    twilioWs.close();
+    return;
+  }
+
+  const ttsApiKey = process.env[`${ttsProvider.toUpperCase()}_API_KEY`];
+  if (!ttsApiKey) {
+    console.error(`[STT→LLM→TTS] Missing API key: ${ttsProvider.toUpperCase()}_API_KEY — call cannot be processed`);
+    twilioWs.close();
+    return;
+  }
+
   const stt = createSTT(sttProvider, {
     apiKey:      sttApiKey,
     onTranscript: handleTranscript,
