@@ -85,7 +85,12 @@ GROUND RULES:
 
 function draftResumeSection(draft) {
   if (!draft) return '';
-  const payload = typeof draft.payload === 'string' ? JSON.parse(draft.payload) : draft.payload;
+  let payload;
+  try {
+    payload = typeof draft.payload === 'string' ? JSON.parse(draft.payload) : draft.payload;
+  } catch {
+    payload = {};
+  }
   return `
 RETURNING CALLER — DRAFT ENGAGEMENT:
 The caller has an incomplete session from a previous call. Here are the details:
