@@ -114,12 +114,20 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
         const draftId = session.draft?.id;
         if (!draftId) return 'Error: no draft found to confirm. Save draft first.';
 
-        const workflow     = session.activeWorkflow;
-        const draftPayload = session.draft?.payload
-          ? (typeof session.draft.payload === 'string'
-              ? (() => { try { return JSON.parse(session.draft.payload); } catch (e) { console.error(`[Handler] Failed to parse draft payload (draft ${session.draft.id}):`, e.message); throw e; } })()
-              : session.draft.payload)
-          : {};
+        const workflow = session.activeWorkflow;
+        let draftPayload = {};
+        if (session.draft?.payload) {
+          if (typeof session.draft.payload === 'string') {
+            try {
+              draftPayload = JSON.parse(session.draft.payload);
+            } catch (e) {
+              console.error(`[Handler] Failed to parse draft payload (draft ${session.draft.id}):`, e.message);
+              return 'The stored booking details are corrupted. Please start over — say what you\'d like to order or book.';
+            }
+          } else {
+            draftPayload = session.draft.payload;
+          }
+        }
         const slotId = draftPayload.slot_id || null;
 
         let engagement;
