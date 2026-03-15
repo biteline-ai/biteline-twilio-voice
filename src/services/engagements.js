@@ -24,7 +24,7 @@ export async function upsertCustomer(businessId, phone, name = null) {
     `INSERT INTO customers (business_id, phone, name)
      VALUES ($1, $2, $3)
      ON CONFLICT (business_id, phone)
-     DO UPDATE SET name = COALESCE(EXCLUDED.name, customers.name),
+     DO UPDATE SET name = COALESCE(NULLIF(EXCLUDED.name, ''), customers.name),
                    visit_count = customers.visit_count + 1,
                    last_seen_at = NOW()
      RETURNING *`,
