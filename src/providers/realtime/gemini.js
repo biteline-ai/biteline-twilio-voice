@@ -46,10 +46,12 @@ function toGeminiTools(openAiTools) {
  */
 export function handleGeminiSession(twilioWs, session) {
   const { callSid } = session;
-  let geminiWs      = null;
-  let streamSid     = null;
-  let callStartTime = Date.now();
-  let pendingFnId   = null;   // current function call id waiting for output
+  let geminiWs         = null;
+  let streamSid        = null;
+  let callStartTime    = Date.now();
+  let pendingFnId      = null;   // current function call id waiting for output
+  let geminiReady      = false;  // true after BidiGenerateContentSetup is acknowledged
+  const audioBacklog   = [];     // Twilio audio chunks buffered before setup completes
 
   // Transcript accumulation (AI turns only — Gemini Live has no input transcription)
   const transcript = [];
@@ -61,8 +63,11 @@ export function handleGeminiSession(twilioWs, session) {
 
     const duration = Math.round((Date.now() - callStartTime) / 1000);
     if (session?.callId) {
-      closeCallRecord(session.callId, { status, durationSeconds: duration })
-        .catch((err) => console.error('[Gemini] closeCallRecord error:', err.message));
+      closeCallRecord(session.callId, {
+        status,
+        durationSeconds: duration,
+        engagementId: session.engagement?.id || null,
+      }).catch((err) => console.error('[Gemini] closeCallRecord error:', err.message));
       saveTranscript(session.callId, session.businessId, transcript)
         .catch((err) => console.error('[Gemini] saveTranscript error:', err.message));
     }
@@ -125,9 +130,18 @@ export function handleGeminiSession(twilioWs, session) {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
 
-    // Server-ready ack
+    // Server-ready ack — flush any buffered audio now that Gemini is ready
     if (msg.setupComplete) {
-      console.log(`[Gemini] Session ready for ${callSid}`);
+      console.log(`[Gemini] Session ready for ${callSid} — flushing ${audioBacklog.length} buffered audio chunk(s)`);
+      geminiReady = true;
+      for (const payload of audioBacklog) {
+        if (geminiWs?.readyState === WebSocket.OPEN) {
+          geminiWs.send(JSON.stringify({
+            realtimeInput: { mediaChunks: [{ mimeType: 'audio/mulaw;rate=8000', data: payload }] },
+          }));
+        }
+      }
+      audioBacklog.length = 0;
       return;
     }
 
@@ -193,16 +207,17 @@ export function handleGeminiSession(twilioWs, session) {
       streamSid = msg.start?.streamSid;
     }
 
-    if (msg.event === 'media' && geminiWs?.readyState === WebSocket.OPEN) {
-      // Relay mulaw audio directly to Gemini
-      geminiWs.send(JSON.stringify({
-        realtimeInput: {
-          mediaChunks: [{
-            mimeType: 'audio/mulaw;rate=8000',
-            data:     msg.media.payload,
-          }],
-        },
-      }));
+    if (msg.event === 'media') {
+      const payload = msg.media?.payload;
+      if (!payload) break;
+      if (!geminiReady) {
+        // Buffer until setup is acknowledged — prevents audio arriving before session is configured
+        audioBacklog.push(payload);
+      } else if (geminiWs?.readyState === WebSocket.OPEN) {
+        geminiWs.send(JSON.stringify({
+          realtimeInput: { mediaChunks: [{ mimeType: 'audio/mulaw;rate=8000', data: payload }] },
+        }));
+      }
     }
 
     if (msg.event === 'stop') {
