@@ -215,8 +215,8 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
 
       // ── Check Availability ──────────────────────────────────────────────────
       case 'check_availability': {
-        const date = resolveDate(args.date);
         const tz   = session.timezone || 'America/Chicago';
+        const date = resolveDate(args.date, tz);
         const result = await query(
           `SELECT id, slot_start, slot_end, capacity - booked AS open_spots
            FROM availability_slots
@@ -270,16 +270,25 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function resolveDate(input) {
-  const today = new Date();
-  const fmt = (d) => d.toISOString().slice(0, 10);
-  if (!input || input === 'today') return fmt(today);
+function resolveDate(input, timezone = 'UTC') {
+  // Returns YYYY-MM-DD in the business's local timezone, not UTC.
+  // toLocaleDateString('en-CA') produces YYYY-MM-DD format natively.
+  const localStr = (d) => d.toLocaleDateString('en-CA', { timeZone: timezone });
+  const now = new Date();
+
+  if (!input || input === 'today') return localStr(now);
+
   if (input === 'tomorrow') {
-    const t = new Date(today);
-    t.setDate(t.getDate() + 1);
-    return fmt(t);
+    // Anchor to UTC noon of today-in-timezone, then advance one UTC day.
+    // Using noon avoids DST edges where adding 86 400 000 ms could land on
+    // the wrong calendar day.
+    const todayStr = localStr(now);
+    const utcNoon  = new Date(`${todayStr}T12:00:00Z`);
+    utcNoon.setUTCDate(utcNoon.getUTCDate() + 1);
+    return localStr(utcNoon);
   }
+
   // Accept YYYY-MM-DD or parse freeform
   const parsed = new Date(input);
-  return isNaN(parsed) ? fmt(today) : fmt(parsed);
+  return isNaN(parsed) ? localStr(now) : localStr(parsed);
 }
