@@ -20,8 +20,12 @@ import { dispatch }             from '../../workflows/handler.js';
 import { closeCallRecord, saveTranscript } from '../../services/calls.js';
 import { releaseCallSlot }                 from '../../services/callLimiter.js';
 
-const OPENAI_API_KEY     = process.env.OPENAI_API_KEY;
+const OPENAI_API_KEY      = process.env.OPENAI_API_KEY;
 const OPENAI_REALTIME_URL = 'wss://api.openai.com/v1/realtime';
+
+if (!OPENAI_API_KEY) {
+  console.warn('[OpenAI] OPENAI_API_KEY is not set — OpenAI Realtime provider will fail to authenticate');
+}
 
 /**
  * Handle an OpenAI Realtime session for a single Twilio call.
