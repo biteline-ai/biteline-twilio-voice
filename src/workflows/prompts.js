@@ -9,7 +9,7 @@
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatHours(hours) {
-  if (!hours || typeof hours !== 'object') return 'Contact us for hours.';
+  if (!hours || typeof hours !== 'object' || Array.isArray(hours)) return 'Contact us for hours.';
   return Object.entries(hours)
     .map(([day, h]) => `${day}: ${h.open}–${h.close}`)
     .join(', ');
