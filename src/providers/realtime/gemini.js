@@ -30,6 +30,10 @@ import { releaseCallSlot }                 from '../../services/callLimiter.js';
 const GEMINI_API_KEY = process.env.GOOGLE_API_KEY;
 const GEMINI_WS_BASE = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent';
 
+if (!GEMINI_API_KEY) {
+  console.warn('[Gemini] GOOGLE_API_KEY is not set — Gemini provider will connect with an invalid key and all calls will fail');
+}
+
 // Gemini tool schema uses OpenAPI-style JSON Schema (same as OpenAI function tools)
 function toGeminiTools(openAiTools) {
   return openAiTools.map((t) => ({
