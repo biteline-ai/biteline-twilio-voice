@@ -233,6 +233,8 @@ export function handleGeminiSession(twilioWs, session) {
         // Buffer until setup is acknowledged — prevents audio arriving before session is configured
         if (audioBacklog.length < 1000) {
           audioBacklog.push(payload);
+        } else {
+          console.warn('[Gemini] Audio backlog full (1000 items) — dropping chunk');
         }
       } else if (geminiWs?.readyState === WebSocket.OPEN) {
         geminiWs.send(JSON.stringify({
