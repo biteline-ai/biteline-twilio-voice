@@ -77,7 +77,7 @@ async function openAIComplete({ baseURL, apiKey, model, systemPrompt, messages, 
       if (delta.tool_calls) {
         for (const tc of delta.tool_calls) {
           if (!toolCalls[tc.index]) toolCalls[tc.index] = { id: '', name: '', args_str: '' };
-          if (tc.id)               toolCalls[tc.index].id       += tc.id;
+          if (tc.id && !toolCalls[tc.index].id) toolCalls[tc.index].id = tc.id;
           if (tc.function?.name)   toolCalls[tc.index].name     += tc.function.name;
           if (tc.function?.arguments) toolCalls[tc.index].args_str += tc.function.arguments;
         }
