@@ -52,7 +52,7 @@ export function handleGeminiSession(twilioWs, session) {
   const { callSid } = session;
   let geminiWs         = null;
   let streamSid        = null;
-  let callStartTime    = Date.now();
+  let callStartTime    = null;
   let pendingFnId      = null;   // current function call id waiting for output
   let geminiReady      = false;  // true after BidiGenerateContentSetup is acknowledged
   const audioBacklog   = [];     // Twilio audio chunks buffered before setup completes
@@ -65,7 +65,9 @@ export function handleGeminiSession(twilioWs, session) {
     if (tornDown) return;
     tornDown = true;
 
-    const duration = Math.round((Date.now() - callStartTime) / 1000);
+    const duration = callStartTime
+      ? Math.round((Date.now() - callStartTime) / 1000)
+      : 0;
     if (session?.callId) {
       closeCallRecord(session.callId, {
         status,
@@ -220,7 +222,8 @@ export function handleGeminiSession(twilioWs, session) {
     try { msg = JSON.parse(raw); } catch { return; }
 
     if (msg.event === 'start') {
-      streamSid = msg.start?.streamSid;
+      streamSid     = msg.start?.streamSid;
+      callStartTime = Date.now();
     }
 
     if (msg.event === 'media') {
