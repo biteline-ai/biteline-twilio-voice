@@ -144,6 +144,6 @@ export async function synthesize({ provider, apiKey, voice, text }) {
       return deepgramTTS({ apiKey: apiKey || process.env.DEEPGRAM_API_KEY, voice, text });
     default:
       console.warn(`[TTS] Unknown provider "${provider}", defaulting to openai`);
-      return openAITTS({ apiKey: process.env.OPENAI_API_KEY, text });
+      return openAITTS({ apiKey: process.env.OPENAI_API_KEY, voice, text });
   }
 }
