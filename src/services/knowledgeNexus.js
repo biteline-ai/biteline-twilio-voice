@@ -104,7 +104,7 @@ export async function syncEngagement({ businessId, callerPhone, engagement, busi
   if (!KN_GRAPH_BASE) return;
 
   const payload = typeof engagement.payload === 'string'
-    ? JSON.parse(engagement.payload)
+    ? (() => { try { return JSON.parse(engagement.payload); } catch { return {}; } })()
     : (engagement.payload || {});
 
   try {
