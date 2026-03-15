@@ -8,6 +8,13 @@ const client = twilio(
 const FROM_NUMBER          = process.env.TWILIO_PHONE_NUMBER;
 const MESSAGING_SERVICE_SID = process.env.MESSAGING_SERVICE_SID;
 
+if (!FROM_NUMBER && !MESSAGING_SERVICE_SID) {
+  console.warn(
+    '[SMS] Neither TWILIO_PHONE_NUMBER nor MESSAGING_SERVICE_SID is set — ' +
+    'all SMS sends will fail until one is configured.'
+  );
+}
+
 /**
  * Send an SMS message.
  * Uses MessagingServiceSid when available (preferred), falls back to From number.

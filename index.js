@@ -18,6 +18,7 @@ import fastifyForm    from '@fastify/formbody';
 import { setupTwilioRoutes }     from './src/services/twilio.js';
 import { setupMediaStreamRoute }  from './src/providers/router.js';
 import { sessionCount }           from './src/sessions/store.js';
+import { pool }                   from './src/db/pool.js';
 
 const PORT      = Number(process.env.PORT) || 6501;
 const HOST      = process.env.HOST || '0.0.0.0';
@@ -134,6 +135,10 @@ fastify.setErrorHandler((error, request, reply) => {
 
 // ── Start ───────────────────────────────────────────────────────────────────────
 try {
+  // Verify database connectivity before accepting traffic
+  await pool.query('SELECT 1');
+  fastify.log.info('Database connection verified');
+
   await fastify.listen({ port: PORT, host: HOST });
   fastify.log.info(`Biteline Voice Server listening on ${HOST}:${PORT}`);
 } catch (err) {

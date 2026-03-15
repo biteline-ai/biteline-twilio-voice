@@ -232,6 +232,7 @@ export function handleOpenAISession(twilioWs, session) {
       }
 
       case 'media': {
+        if (!msg.media?.payload) break;
         if (openAiWs?.readyState === WebSocket.OPEN) {
           openAiWs.send(JSON.stringify({
             type:  'input_audio_buffer.append',
