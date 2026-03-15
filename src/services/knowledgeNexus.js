@@ -28,19 +28,28 @@ const KN_TOKEN          = process.env.KN_SERVICE_TOKEN || process.env.KN_API_KEY
 
 async function knPost(baseUrl, path, body) {
   if (!baseUrl) return null;
-  const res = await fetch(`${baseUrl}${path}`, {
-    method:  'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(KN_TOKEN ? { 'X-Internal-Service-Token': KN_TOKEN } : {}),
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`KN POST ${path} → ${res.status}: ${text.slice(0, 200)}`);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const res = await fetch(`${baseUrl}${path}`, {
+      method:  'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(KN_TOKEN ? { 'X-Internal-Service-Token': KN_TOKEN } : {}),
+      },
+      body:   JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`KN POST ${path} → ${res.status}: ${text.slice(0, 200)}`);
+    }
+    return res.status === 204 ? null : res.json();
+  } finally {
+    clearTimeout(timer);
   }
-  return res.status === 204 ? null : res.json();
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────
