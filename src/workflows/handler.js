@@ -66,12 +66,14 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
         if (session.aiConfig?.sms_enabled === false) {
           return 'SMS is currently disabled for this business.';
         }
+        if (!args.content) return 'Please provide the location details to send.';
         await sendLocationSMS(session.callerPhone, args.content);
         return 'Location details sent via SMS.';
       }
 
       // ── Get Caller Name ─────────────────────────────────────────────────────
       case 'get_caller_name': {
+        if (!args.caller_name) return 'Please provide the caller name.';
         const customer = await upsertCustomer(
           session.businessId,
           session.callerPhone,
@@ -85,6 +87,7 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
       case 'update_caller_name': {
         const customerId = session.customer?.id;
         if (!customerId) return 'No customer record found to update.';
+        if (!args.new_name) return 'Please provide the new name.';
         const updated = await updateCustomerName(customerId, args.new_name);
         updateSession(callSid, { customer: updated });
         return `Name updated to ${args.new_name}.`;
