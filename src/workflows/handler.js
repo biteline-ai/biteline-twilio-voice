@@ -114,7 +114,7 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
         const workflow     = session.activeWorkflow;
         const draftPayload = session.draft?.payload
           ? (typeof session.draft.payload === 'string'
-              ? (() => { try { return JSON.parse(session.draft.payload); } catch { return {}; } })()
+              ? (() => { try { return JSON.parse(session.draft.payload); } catch (e) { console.error(`[Handler] Failed to parse draft payload (draft ${session.draft.id}):`, e.message); return {}; } })()
               : session.draft.payload)
           : {};
         const slotId = draftPayload.slot_id || null;
@@ -141,7 +141,7 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
         updateSession(callSid, { engagement, draft: null });
 
         const payload    = typeof engagement.payload === 'string'
-          ? (() => { try { return JSON.parse(engagement.payload); } catch { return {}; } })()
+          ? (() => { try { return JSON.parse(engagement.payload); } catch (e) { console.error(`[Handler] Failed to parse engagement payload (engagement ${engagement.id}):`, e.message); return {}; } })()
           : (engagement.payload || {});
 
         // Notify business owner (use transfer_number — business.phone is the Twilio inbound line)
