@@ -21,52 +21,57 @@ export function setupMediaStreamRoute(fastify) {
 
     // Read the first message to determine routing
     twilioWs.once('message', async (raw) => {
-      let msg;
-      try { msg = JSON.parse(raw); } catch { return; }
+      try {
+        let msg;
+        try { msg = JSON.parse(raw); } catch { return; }
 
-      if (msg.event !== 'start') {
-        console.warn('[Router] First message was not "start":', msg.event);
-        return;
-      }
+        if (msg.event !== 'start') {
+          console.warn('[Router] First message was not "start":', msg.event);
+          return;
+        }
 
-      const callSid = msg.start?.callSid || msg.start?.customParameters?.callSid;
-      if (!callSid) {
-        console.error('[Router] No callSid in start event');
+        const callSid = msg.start?.callSid || msg.start?.customParameters?.callSid;
+        if (!callSid) {
+          console.error('[Router] No callSid in start event');
+          twilioWs.close();
+          return;
+        }
+
+        // Ensure session is in local cache (loads from Redis if needed for multi-server deployments)
+        await loadSession(callSid);
+
+        const session = getSession(callSid);
+        if (!session) {
+          console.error(`[Router] No session found for callSid: ${callSid}`);
+          twilioWs.close();
+          return;
+        }
+
+        const { pipeline, aiConfig = {} } = session;
+
+        // Determine provider: explicit field takes precedence, model name is fallback
+        const isGemini =
+          aiConfig.realtime_provider === 'google' ||
+          aiConfig.realtime_model?.startsWith('gemini-');
+
+        if (pipeline === 'stt_llm_tts') {
+          console.log(`[Router] → STT→LLM→TTS pipeline (${callSid})`);
+          handleSTTPipeline(twilioWs, session);
+        } else if (isGemini) {
+          console.log(`[Router] → Gemini Live (${aiConfig.realtime_model}) (${callSid})`);
+          handleGeminiSession(twilioWs, session);
+        } else {
+          console.log(`[Router] → OpenAI Realtime (${aiConfig.realtime_model || 'default'}) (${callSid})`);
+          handleOpenAISession(twilioWs, session);
+        }
+
+        // Re-deliver the 'start' message to the newly registered handler so it
+        // can extract streamSid and initialise the upstream provider connection.
+        twilioWs.emit('message', raw);
+      } catch (err) {
+        console.error('[Router] Unhandled error in start handler:', err.message);
         twilioWs.close();
-        return;
       }
-
-      // Ensure session is in local cache (loads from Redis if needed for multi-server deployments)
-      await loadSession(callSid);
-
-      const session = getSession(callSid);
-      if (!session) {
-        console.error(`[Router] No session found for callSid: ${callSid}`);
-        twilioWs.close();
-        return;
-      }
-
-      const { pipeline, aiConfig = {} } = session;
-
-      // Determine provider: explicit field takes precedence, model name is fallback
-      const isGemini =
-        aiConfig.realtime_provider === 'google' ||
-        aiConfig.realtime_model?.startsWith('gemini-');
-
-      if (pipeline === 'stt_llm_tts') {
-        console.log(`[Router] → STT→LLM→TTS pipeline (${callSid})`);
-        handleSTTPipeline(twilioWs, session);
-      } else if (isGemini) {
-        console.log(`[Router] → Gemini Live (${aiConfig.realtime_model}) (${callSid})`);
-        handleGeminiSession(twilioWs, session);
-      } else {
-        console.log(`[Router] → OpenAI Realtime (${aiConfig.realtime_model || 'default'}) (${callSid})`);
-        handleOpenAISession(twilioWs, session);
-      }
-
-      // Re-deliver the 'start' message to the newly registered handler so it
-      // can extract streamSid and initialise the upstream provider connection.
-      twilioWs.emit('message', raw);
     });
   });
 }

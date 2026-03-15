@@ -254,4 +254,9 @@ export function handleGeminiSession(twilioWs, session) {
     console.log(`[Gemini] Twilio WS closed for ${callSid}`);
     teardown('completed');
   });
+
+  twilioWs.on('error', (err) => {
+    console.error(`[Gemini] Twilio WS error for ${callSid}:`, err.message);
+    teardown('failed');
+  });
 }
