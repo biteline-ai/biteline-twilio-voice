@@ -170,6 +170,14 @@ export function handleOpenAISession(twilioWs, session) {
               let args = {};
               try { args = JSON.parse(rawArgs || '{}'); } catch (err) {
                 console.error(`[OpenAI] Failed to parse tool arguments for ${name}:`, err.message, rawArgs);
+                // Send an error response so the conversation doesn't hang waiting for a result
+                if (openAiWs.readyState === WebSocket.OPEN) {
+                  openAiWs.send(JSON.stringify({
+                    type: 'conversation.item.create',
+                    item: { type: 'function_call_output', call_id, output: `Error: malformed arguments for ${name}` },
+                  }));
+                  openAiWs.send(JSON.stringify({ type: 'response.create' }));
+                }
                 break;
               }
 

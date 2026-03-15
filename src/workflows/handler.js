@@ -114,7 +114,7 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
         const workflow     = session.activeWorkflow;
         const draftPayload = session.draft?.payload
           ? (typeof session.draft.payload === 'string'
-              ? (() => { try { return JSON.parse(session.draft.payload); } catch (e) { console.error(`[Handler] Failed to parse draft payload (draft ${session.draft.id}):`, e.message); return {}; } })()
+              ? (() => { try { return JSON.parse(session.draft.payload); } catch (e) { console.error(`[Handler] Failed to parse draft payload (draft ${session.draft.id}):`, e.message); throw e; } })()
               : session.draft.payload)
           : {};
         const slotId = draftPayload.slot_id || null;
