@@ -1,0 +1,64 @@
+# Biteline Voice Server — podman-compose
+#
+# Starts the voice server alongside a Redis instance for session
+# write-through caching and concurrent-call limiting.
+#
+# Usage:
+#   podman-compose up -d
+#   podman-compose logs -f voice
+#   podman-compose down
+#
+# For production, supply all secrets via a real .env file (not committed).
+# NEVER commit a .env file with real credentials.
+#
+# Ports (Biteline 6500-range convention):
+#   6501  — Voice server HTTP/WebSocket
+#   6379  — Redis (localhost only; not exposed externally)
+
+version: "3.9"
+
+services:
+
+  redis:
+    image: docker.io/redis:7-alpine
+    container_name: biteline-voice-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"   # bind to localhost only
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  voice:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: biteline-voice
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - PORT=6501
+      - HOST=0.0.0.0
+      - NODE_ENV=production
+    ports:
+      - "6501:6501"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:6501/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  redis_data:
+    driver: local
