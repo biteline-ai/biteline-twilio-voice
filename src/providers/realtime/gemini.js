@@ -153,7 +153,7 @@ export function handleGeminiSession(twilioWs, session) {
 
     for (const part of parts) {
       // Audio output → relay to Twilio
-      if (part.inlineData?.mimeType?.startsWith('audio/') && streamSid) {
+      if (part.inlineData?.mimeType?.startsWith('audio/') && part.inlineData?.data && streamSid) {
         const audioBase64 = part.inlineData.data;
         twilioWs.send(JSON.stringify({
           event: 'media',
