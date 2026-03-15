@@ -70,7 +70,9 @@ export function createDeepgramSTT({ apiKey, onTranscript, onError }) {
       }
     },
     close() {
-      if (ws.readyState === WebSocket.OPEN) ws.close();
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
     },
   };
 }
