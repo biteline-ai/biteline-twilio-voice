@@ -236,17 +236,15 @@ PROTOCOL:
  * @returns {string}
  */
 export function generateSystemPrompt(session) {
-  const { business, locations, services, specials, activeMenu, aiConfig, workflows, customer, draft } = session;
+  const { business, locations, services, specials, activeMenu, aiConfig, activeWorkflow, customer, draft } = session;
 
   // Custom prompt override
   if (aiConfig?.system_prompt?.trim()) {
     return aiConfig.system_prompt;
   }
 
-  // Pick the primary active workflow
-  const workflow = workflows?.find((w) => w.is_active) || workflows?.[0];
-  const workflowType = workflow?.type || 'ordering';
-  const workflowConfig = workflow;
+  const workflowType   = activeWorkflow?.type || 'ordering';
+  const workflowConfig = activeWorkflow;
 
   const args = { business, locations, services, specials, activeMenu, customer, draft, workflowConfig };
 

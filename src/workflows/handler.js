@@ -63,6 +63,9 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
 
       // ── Location SMS ────────────────────────────────────────────────────────
       case 'location_sms': {
+        if (session.aiConfig?.sms_enabled === false) {
+          return 'SMS is currently disabled for this business.';
+        }
         await sendLocationSMS(session.callerPhone, args.content);
         return 'Location details sent via SMS.';
       }
@@ -90,7 +93,7 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
       // ── Save Draft Engagement ───────────────────────────────────────────────
       // Called BEFORE the AI reads back the confirmation summary.
       case 'save_draft_engagement': {
-        const workflow = session.workflows?.find((w) => w.is_active) || session.workflows?.[0];
+        const workflow = session.activeWorkflow;
         const draft = await saveDraft({
           businessId:      session.businessId,
           workflowId:      workflow?.id,
@@ -112,25 +115,28 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
         updateSession(callSid, { engagement, draft: null });
 
         // Send confirmation SMS based on workflow type
-        const workflow = session.workflows?.find((w) => w.is_active) || session.workflows?.[0];
+        const workflow = session.activeWorkflow;
         const payload  = typeof engagement.payload === 'string'
           ? JSON.parse(engagement.payload)
           : engagement.payload;
 
         const businessPhone = session.business?.phone;
+        const smsEnabled    = session.aiConfig?.sms_enabled !== false;
 
-        if (workflow?.type === 'ordering') {
-          await sendOrderConfirmation({
-            callerPhone:   session.callerPhone,
-            businessPhone,
-            engagement:    payload,
-          }).catch((err) => console.error('[SMS] Order confirmation failed:', err.message));
-        } else if (['appointment', 'reservation'].includes(workflow?.type)) {
-          await sendBookingConfirmation({
-            callerPhone:   session.callerPhone,
-            businessPhone,
-            engagement:    payload,
-          }).catch((err) => console.error('[SMS] Booking confirmation failed:', err.message));
+        if (smsEnabled) {
+          if (workflow?.type === 'ordering') {
+            await sendOrderConfirmation({
+              callerPhone:   session.callerPhone,
+              businessPhone,
+              engagement:    payload,
+            }).catch((err) => console.error('[SMS] Order confirmation failed:', err.message));
+          } else if (['appointment', 'reservation'].includes(workflow?.type)) {
+            await sendBookingConfirmation({
+              callerPhone:   session.callerPhone,
+              businessPhone,
+              engagement:    payload,
+            }).catch((err) => console.error('[SMS] Booking confirmation failed:', err.message));
+          }
         }
 
         // ── Create reservation record + lock slot for reservation/appointment ─
@@ -177,14 +183,17 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
           ).catch((err) => console.error('[Reservations] insert failed:', err.message));
         }
 
-        // ── Knowledge Nexus sync (fire-and-forget) ────────────────────────
-        syncEngagement({
-          businessId:   session.businessId,
-          callerPhone:  session.callerPhone,
-          engagement,
-          business:     session.business,
-          workflowType: workflow?.type || 'ordering',
-        }).catch((err) => console.error('[KN] sync failed:', err.message));
+        // ── Knowledge Nexus sync (fire-and-forget, gated on kn_enabled) ──
+        if (session.aiConfig?.kn_enabled) {
+          syncEngagement({
+            businessId:   session.businessId,
+            callerPhone:  session.callerPhone,
+            engagement,
+            business:     session.business,
+            workflowType: workflow?.type || 'ordering',
+            realmId:      session.aiConfig?.kn_realm_id || null,
+          }).catch((err) => console.error('[KN] sync failed:', err.message));
+        }
 
         return `Engagement confirmed (id: ${engagement.id}).`;
       }
@@ -210,7 +219,7 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
       // ── Update Draft Order ──────────────────────────────────────────────────
       case 'update_draft_order': {
         if (!session.draft?.id) return 'No draft to update. Place an order first.';
-        const workflow = session.workflows?.find((w) => w.is_active) || session.workflows?.[0];
+        const workflow = session.activeWorkflow;
         const draft = await saveDraft({
           businessId:      session.businessId,
           workflowId:      workflow?.id,
@@ -261,6 +270,7 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
 
       // ── Search Knowledge Base ───────────────────────────────────────────────
       case 'search_knowledge': {
+        if (!session.aiConfig?.kn_enabled) return 'Knowledge base search is not enabled for this business.';
         const { query: knQuery } = args;
         if (!knQuery?.trim()) return 'Please provide a search query.';
         const result = await knSearch(session.businessId, knQuery);

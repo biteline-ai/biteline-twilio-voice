@@ -81,9 +81,10 @@ export function setupTwilioRoutes(fastify) {
         ),
       ]);
 
-      const locations = locResult.rows;
-      const workflows = workflowResult.rows;
-      const aiConfig  = aiResult.rows[0] || {};
+      const locations      = locResult.rows;
+      const workflows      = workflowResult.rows;
+      const aiConfig       = aiResult.rows[0] || {};
+      const activeWorkflow = workflows.find((w) => w.is_active) || workflows[0] || null;
 
       // ── 2b. Time-aware menu resolution ───────────────────────────────────
       // Use the primary location's timezone, or the ai_config timezone, or Central.
@@ -145,6 +146,7 @@ export function setupTwilioRoutes(fastify) {
         business,
         locations,
         workflows,
+        activeWorkflow,
         aiConfig,
         services,
         specials,
