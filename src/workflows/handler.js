@@ -52,7 +52,7 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
 
       // ── Transfer Call ───────────────────────────────────────────────────────
       case 'transfer_call': {
-        const managerPhone = session.business?.phone || process.env.MANAGER_NUMBER;
+        const managerPhone = session.aiConfig?.transfer_number || process.env.MANAGER_NUMBER;
         if (managerPhone && session.callSid) {
           const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Dial callerId="${session.destPhone}">${managerPhone}</Dial></Response>`;
           await twilioClient.calls(session.callSid).update({ twiml });
@@ -245,9 +245,10 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
             hour: '2-digit', minute: '2-digit', timeZone: tz,
           });
           return {
-            slot_id:    r.id,
-            time:       t,
-            open_spots: r.open_spots,
+            slot_id:      r.id,
+            time:         t,
+            iso_datetime: r.slot_start,
+            open_spots:   r.open_spots,
           };
         });
 
