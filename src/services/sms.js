@@ -29,8 +29,10 @@ export async function sendSMS(to, body) {
   const params = { to: to.trim(), body };
   if (MESSAGING_SERVICE_SID) {
     params.messagingServiceSid = MESSAGING_SERVICE_SID;
-  } else {
+  } else if (FROM_NUMBER) {
     params.from = FROM_NUMBER;
+  } else {
+    throw new Error('SMS not sent: neither MESSAGING_SERVICE_SID nor TWILIO_PHONE_NUMBER is configured');
   }
   return client.messages.create(params);
 }
