@@ -23,8 +23,8 @@ import { getSession, deleteSession } from '../../sessions/store.js';
 import { generateSystemPrompt }      from '../../workflows/prompts.js';
 import { buildTools }                from '../../workflows/tools.js';
 import { dispatch }                  from '../../workflows/handler.js';
-import { closeCallRecord }           from '../../services/calls.js';
-import { releaseCallSlot }           from '../../services/callLimiter.js';
+import { closeCallRecord, saveTranscript } from '../../services/calls.js';
+import { releaseCallSlot }                 from '../../services/callLimiter.js';
 import { createSTT }                 from './stt.js';
 import { complete as llmComplete }   from './llm.js';
 import { synthesize as ttsSynth }    from './tts.js';
@@ -181,6 +181,8 @@ export function handleSTTPipeline(twilioWs, session) {
     if (sess?.callId) {
       closeCallRecord(sess.callId, { status, durationSeconds: duration })
         .catch((err) => console.error('[STT→LLM→TTS] closeCallRecord:', err.message));
+      saveTranscript(sess.callId, sess.businessId, messages)
+        .catch((err) => console.error('[STT→LLM→TTS] saveTranscript:', err.message));
     }
 
     releaseCallSlot(sess?.businessId)

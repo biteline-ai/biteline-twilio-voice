@@ -24,8 +24,8 @@ import { deleteSession } from '../../sessions/store.js';
 import { generateSystemPrompt } from '../../workflows/prompts.js';
 import { buildTools }           from '../../workflows/tools.js';
 import { dispatch }             from '../../workflows/handler.js';
-import { closeCallRecord }      from '../../services/calls.js';
-import { releaseCallSlot }      from '../../services/callLimiter.js';
+import { closeCallRecord, saveTranscript } from '../../services/calls.js';
+import { releaseCallSlot }                 from '../../services/callLimiter.js';
 
 const GEMINI_API_KEY = process.env.GOOGLE_API_KEY;
 const GEMINI_WS_BASE = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent';
@@ -51,6 +51,9 @@ export function handleGeminiSession(twilioWs, session) {
   let callStartTime = Date.now();
   let pendingFnId   = null;   // current function call id waiting for output
 
+  // Transcript accumulation (AI turns only — Gemini Live has no input transcription)
+  const transcript = [];
+
   let tornDown = false;
   function teardown(status = 'completed') {
     if (tornDown) return;
@@ -60,6 +63,8 @@ export function handleGeminiSession(twilioWs, session) {
     if (session?.callId) {
       closeCallRecord(session.callId, { status, durationSeconds: duration })
         .catch((err) => console.error('[Gemini] closeCallRecord error:', err.message));
+      saveTranscript(session.callId, session.businessId, transcript)
+        .catch((err) => console.error('[Gemini] saveTranscript error:', err.message));
     }
 
     releaseCallSlot(session?.businessId)
@@ -137,6 +142,11 @@ export function handleGeminiSession(twilioWs, session) {
           streamSid,
           media: { payload: audioBase64 },
         }));
+      }
+
+      // AI text turn (for transcript)
+      if (part.text) {
+        transcript.push({ role: 'assistant', content: part.text });
       }
 
       // Function call
