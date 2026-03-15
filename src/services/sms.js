@@ -23,7 +23,10 @@ if (!FROM_NUMBER && !MESSAGING_SERVICE_SID) {
  * @param {string} body    - Message body
  */
 export async function sendSMS(to, body) {
-  const params = { to, body };
+  if (!to || typeof to !== 'string' || !to.trim()) {
+    throw new Error('SMS not sent: recipient phone number is missing or invalid');
+  }
+  const params = { to: to.trim(), body };
   if (MESSAGING_SERVICE_SID) {
     params.messagingServiceSid = MESSAGING_SERVICE_SID;
   } else {
