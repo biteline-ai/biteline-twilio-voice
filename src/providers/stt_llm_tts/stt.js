@@ -104,7 +104,10 @@ export function createGroqSTT({ apiKey }) {
         headers: { Authorization: `Bearer ${apiKey}` },
         body:    form,
       });
-      if (!res.ok) return '';
+      if (!res.ok) {
+        console.error('[Groq STT] Transcription failed:', res.status, await res.text().catch(() => ''));
+        return '';
+      }
       const data = await res.json();
       return data.text?.trim() || '';
     },
@@ -138,7 +141,10 @@ export function createOpenAISTT({ apiKey }) {
         headers: { Authorization: `Bearer ${apiKey}` },
         body:    form,
       });
-      if (!res.ok) return '';
+      if (!res.ok) {
+        console.error('[OpenAI STT] Transcription failed:', res.status, await res.text().catch(() => ''));
+        return '';
+      }
       const data = await res.json();
       return data.text?.trim() || '';
     },
