@@ -24,6 +24,7 @@ import { generateSystemPrompt }      from '../../workflows/prompts.js';
 import { buildTools }                from '../../workflows/tools.js';
 import { dispatch }                  from '../../workflows/handler.js';
 import { closeCallRecord }           from '../../services/calls.js';
+import { releaseCallSlot }           from '../../services/callLimiter.js';
 import { createSTT }                 from './stt.js';
 import { complete as llmComplete }   from './llm.js';
 import { synthesize as ttsSynth }    from './tts.js';
@@ -168,7 +169,11 @@ export function handleSTTPipeline(twilioWs, session) {
     teardown('failed');
   });
 
+  let tornDown = false;
   function teardown(status = 'completed') {
+    if (tornDown) return;
+    tornDown = true;
+
     if (silenceTimer) clearTimeout(silenceTimer);
     stt.close?.();
     const duration = Math.round((Date.now() - callStartTime) / 1000);
@@ -177,6 +182,10 @@ export function handleSTTPipeline(twilioWs, session) {
       closeCallRecord(sess.callId, { status, durationSeconds: duration })
         .catch((err) => console.error('[STT→LLM→TTS] closeCallRecord:', err.message));
     }
+
+    releaseCallSlot(sess?.businessId)
+      .catch((err) => console.error('[STT→LLM→TTS] releaseCallSlot error:', err.message));
+
     deleteSession(callSid);
   }
 }

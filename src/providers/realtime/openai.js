@@ -18,6 +18,7 @@ import { generateSystemPrompt } from '../../workflows/prompts.js';
 import { buildTools }           from '../../workflows/tools.js';
 import { dispatch }             from '../../workflows/handler.js';
 import { closeCallRecord }      from '../../services/calls.js';
+import { releaseCallSlot }      from '../../services/callLimiter.js';
 
 const OPENAI_API_KEY     = process.env.OPENAI_API_KEY;
 const OPENAI_REALTIME_URL = 'wss://api.openai.com/v1/realtime';
@@ -38,7 +39,11 @@ export function handleOpenAISession(twilioWs, session) {
   let isConnected   = false;
 
   // ── Tear-down helper ──────────────────────────────────────────────────────
+  let tornDown = false;
   function teardown(status = 'completed') {
+    if (tornDown) return;
+    tornDown = true;
+
     const duration = callStartTime
       ? Math.round((Date.now() - callStartTime) / 1000)
       : 0;
@@ -50,6 +55,10 @@ export function handleOpenAISession(twilioWs, session) {
         engagementId: session.engagement?.id || null,
       }).catch((err) => console.error('[OpenAI] Error closing call record:', err.message));
     }
+
+    releaseCallSlot(session?.businessId)
+      .catch((err) => console.error('[OpenAI] releaseCallSlot error:', err.message));
+
     deleteSession(callSid);
 
     if (openAiWs && openAiWs.readyState === WebSocket.OPEN) {
