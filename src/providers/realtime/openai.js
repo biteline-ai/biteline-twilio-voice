@@ -172,12 +172,18 @@ export function handleOpenAISession(twilioWs, session) {
 
               console.log(`[OpenAI] Tool call: ${name}`, args);
 
-              const result = await dispatch(callSid, name, args, {
-                endCallFn: () => {
-                  twilioWs.close();
-                  openAiWs.close();
-                },
-              });
+              let result;
+              try {
+                result = await dispatch(callSid, name, args, {
+                  endCallFn: () => {
+                    twilioWs.close();
+                    openAiWs.close();
+                  },
+                });
+              } catch (err) {
+                console.error(`[OpenAI] dispatch error for ${name}:`, err.message);
+                result = `Error executing ${name}: ${err.message}`;
+              }
 
               if (openAiWs.readyState === WebSocket.OPEN) {
                 openAiWs.send(JSON.stringify({
