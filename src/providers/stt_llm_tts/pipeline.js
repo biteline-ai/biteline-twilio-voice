@@ -129,10 +129,20 @@ export function handleSTTPipeline(twilioWs, session) {
   }
 
   // ── STT instance ─────────────────────────────────────────────────────────────
+  const sttApiKey = process.env[`${sttProvider.toUpperCase()}_API_KEY`];
+  if (!sttApiKey) {
+    console.error(`[STT→LLM→TTS] Missing API key: ${sttProvider.toUpperCase()}_API_KEY — call cannot be processed`);
+    twilioWs.close();
+    return;
+  }
+
   const stt = createSTT(sttProvider, {
-    apiKey:      process.env[`${sttProvider.toUpperCase()}_API_KEY`],
+    apiKey:      sttApiKey,
     onTranscript: handleTranscript,
-    onError:     (err) => console.error('[STT] Error:', err.message),
+    onError:     (err) => {
+      console.error('[STT] Error:', err.message);
+      teardown('failed');
+    },
   });
 
   // For batch STT (groq/openai), we use silence detection to trigger transcription
