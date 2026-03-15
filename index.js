@@ -145,3 +145,13 @@ try {
   fastify.log.error(err);
   process.exit(1);
 }
+
+// Graceful shutdown
+async function shutdown(signal) {
+  fastify.log.info(`${signal} received — shutting down gracefully`);
+  await fastify.close();
+  await pool.end();
+  process.exit(0);
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
