@@ -11,7 +11,7 @@ import {
   upsertCustomer,
   updateCustomerName,
   saveDraft,
-  confirmDraft,
+  confirmDraftWithSlot,
   cancelDraft,
 } from '../services/engagements.js';
 import {
@@ -111,76 +111,57 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
         const draftId = session.draft?.id;
         if (!draftId) return 'Error: no draft found to confirm. Save draft first.';
 
-        const engagement = await confirmDraft(draftId, session.callId || null);
+        const workflow     = session.activeWorkflow;
+        const draftPayload = session.draft?.payload
+          ? (typeof session.draft.payload === 'string'
+              ? (() => { try { return JSON.parse(session.draft.payload); } catch { return {}; } })()
+              : session.draft.payload)
+          : {};
+        const slotId = draftPayload.slot_id || null;
+
+        let engagement;
+        try {
+          engagement = await confirmDraftWithSlot({
+            draftId,
+            callId:       session.callId || null,
+            slotId,
+            businessId:   session.businessId,
+            customerId:   session.customer?.id || null,
+            callerPhone:  session.callerPhone,
+            payload:      draftPayload,
+            workflowType: workflow?.type || 'ordering',
+          });
+        } catch (err) {
+          if (err.statusCode === 409) {
+            return 'Sorry, that time slot just became fully booked. Please use check_availability to find another open slot.';
+          }
+          throw err;
+        }
+
         updateSession(callSid, { engagement, draft: null });
 
-        // Send confirmation SMS based on workflow type
-        const workflow = session.activeWorkflow;
-        const payload  = typeof engagement.payload === 'string'
-          ? JSON.parse(engagement.payload)
-          : engagement.payload;
+        const payload    = typeof engagement.payload === 'string'
+          ? (() => { try { return JSON.parse(engagement.payload); } catch { return {}; } })()
+          : (engagement.payload || {});
 
-        const businessPhone = session.business?.phone;
-        const smsEnabled    = session.aiConfig?.sms_enabled !== false;
+        // Notify business owner (use transfer_number — business.phone is the Twilio inbound line)
+        const ownerPhone = session.aiConfig?.transfer_number || null;
+        const smsEnabled = session.aiConfig?.sms_enabled !== false;
 
         if (smsEnabled) {
           if (workflow?.type === 'ordering') {
-            await sendOrderConfirmation({
+            sendOrderConfirmation({
               callerPhone:   session.callerPhone,
-              businessPhone,
+              businessPhone: ownerPhone,
               engagement:    payload,
             }).catch((err) => console.error('[SMS] Order confirmation failed:', err.message));
           } else if (['appointment', 'reservation'].includes(workflow?.type)) {
-            await sendBookingConfirmation({
+            sendBookingConfirmation({
               callerPhone:   session.callerPhone,
-              businessPhone,
+              businessPhone: ownerPhone,
               engagement:    payload,
             }).catch((err) => console.error('[SMS] Booking confirmation failed:', err.message));
           }
-        }
-
-        // ── Create reservation record + lock slot for reservation/appointment ─
-        if (['reservation', 'appointment'].includes(workflow?.type)) {
-          const p      = payload || {};
-          const slotId = p.slot_id || null;
-
-          // Lock and increment the slot atomically if slot_id was provided
-          if (slotId) {
-            const slotResult = await query(
-              `UPDATE availability_slots
-               SET booked = booked + 1
-               WHERE id = $1 AND booked < capacity
-               RETURNING id`,
-              [slotId]
-            ).catch((err) => {
-              console.error('[Slot] increment failed:', err.message);
-              return { rows: [] };
-            });
-
-            if (!slotResult.rows.length) {
-              // Slot became full between check and confirm — surface error to AI
-              return 'Sorry, that time slot just became unavailable. Please use check_availability to find another slot.';
-            }
-          }
-
-          query(
-            `INSERT INTO reservations
-               (business_id, customer_id, slot_id, engagement_id, caller_phone, guest_name,
-                party_size, reserved_for, notes, status)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'confirmed')
-             ON CONFLICT DO NOTHING`,
-            [
-              session.businessId,
-              session.customer?.id || null,
-              slotId,
-              engagement.id,
-              session.callerPhone,
-              p.name || p.guest_name || null,
-              p.party_size || p.guests || 1,
-              p.date_time || p.reserved_for || null,
-              p.notes || p.special_requests || null,
-            ]
-          ).catch((err) => console.error('[Reservations] insert failed:', err.message));
         }
 
         // ── Knowledge Nexus sync (fire-and-forget, gated on kn_enabled) ──

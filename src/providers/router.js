@@ -48,10 +48,15 @@ export function setupMediaStreamRoute(fastify) {
 
       const { pipeline, aiConfig = {} } = session;
 
+      // Determine provider: explicit field takes precedence, model name is fallback
+      const isGemini =
+        aiConfig.realtime_provider === 'google' ||
+        aiConfig.realtime_model?.startsWith('gemini-');
+
       if (pipeline === 'stt_llm_tts') {
         console.log(`[Router] → STT→LLM→TTS pipeline (${callSid})`);
         handleSTTPipeline(twilioWs, session);
-      } else if (aiConfig.realtime_model?.startsWith('gemini-')) {
+      } else if (isGemini) {
         console.log(`[Router] → Gemini Live (${aiConfig.realtime_model}) (${callSid})`);
         handleGeminiSession(twilioWs, session);
       } else {

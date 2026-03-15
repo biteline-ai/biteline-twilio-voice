@@ -44,14 +44,15 @@ export async function sendLocationSMS(callerPhone, content) {
  * @param {object} opts.engagement     - { customer_name, items, total, location, pickup_time }
  */
 export async function sendOrderConfirmation({ callerPhone, businessPhone, engagement }) {
+  const fmtPrice = (p) => Number(p || 0).toFixed(2);
   const itemsText = (engagement.items || [])
-    .map((i) => `${i.qty}x ${i.name} ($${i.price} each)`)
+    .map((i) => `${i.qty}x ${i.name} ($${fmtPrice(i.price)} each)`)
     .join(', ');
 
   const customerMsg = [
     `Thank you, ${engagement.customer_name || 'valued customer'}, for your order!`,
     `Items: ${itemsText}`,
-    `Total: $${engagement.total}`,
+    `Total: $${fmtPrice(engagement.total)}`,
     `Location: ${engagement.location}`,
     `Pickup: ${engagement.pickup_time}`,
     `We look forward to serving you!`,
@@ -70,22 +71,27 @@ export async function sendOrderConfirmation({ callerPhone, businessPhone, engage
 
 /**
  * Send an appointment/reservation confirmation SMS.
+ * engagement payload fields: name/guest_name, date_time/reserved_for, service, notes
  */
 export async function sendBookingConfirmation({ callerPhone, businessPhone, engagement }) {
+  const name     = engagement.name || engagement.guest_name || engagement.customer_name || 'valued customer';
+  const dateTime = engagement.date_time || engagement.reserved_for || engagement.scheduled_at || '';
+  const service  = engagement.service || engagement.service_name || 'Appointment';
+
   const customerMsg = [
     `Your booking is confirmed!`,
-    `Name: ${engagement.customer_name}`,
-    `Date/Time: ${engagement.scheduled_at}`,
-    `Service: ${engagement.service_name || 'Appointment'}`,
+    `Name: ${name}`,
+    dateTime ? `Date/Time: ${dateTime}` : null,
+    `Service: ${service}`,
     engagement.notes ? `Notes: ${engagement.notes}` : null,
-    `Reply CANCEL to cancel.`,
+    `Questions? Call us back anytime.`,
   ].filter(Boolean).join('\n');
 
   const businessMsg = [
-    `New booking: ${engagement.customer_name}`,
-    `Time: ${engagement.scheduled_at} | Service: ${engagement.service_name || 'Appointment'}`,
-    `Phone: (masked)`,
-  ].join('\n');
+    `New booking: ${name}`,
+    dateTime ? `Time: ${dateTime}` : null,
+    `Service: ${service}`,
+  ].filter(Boolean).join(' | ');
 
   await Promise.all([
     sendSMS(callerPhone, customerMsg),

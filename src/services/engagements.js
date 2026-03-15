@@ -1,4 +1,4 @@
-import { query } from '../db/pool.js';
+import { query, withTransaction } from '../db/pool.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CUSTOMER
@@ -141,4 +141,95 @@ export async function confirmDraft(draftId, callId = null) {
  */
 export async function cancelDraft(draftId) {
   await query(`DELETE FROM draft_engagements WHERE id = $1`, [draftId]);
+}
+
+/**
+ * Atomically confirm a draft engagement, lock+increment the availability slot,
+ * and create the reservation record — all in a single transaction.
+ *
+ * This prevents the race condition where confirm succeeds but the slot is full,
+ * and ensures the reservation row always exists alongside the engagement.
+ *
+ * @param {object} opts
+ * @param {string}      opts.draftId
+ * @param {string|null} opts.callId
+ * @param {string|null} opts.slotId        - From payload.slot_id
+ * @param {string}      opts.businessId
+ * @param {string|null} opts.customerId
+ * @param {string|null} opts.callerPhone
+ * @param {object}      opts.payload       - Parsed engagement payload
+ * @param {string}      opts.workflowType
+ * @returns {Promise<object>} engagement row
+ * @throws Error with .statusCode 409 if slot is full
+ */
+export async function confirmDraftWithSlot({
+  draftId,
+  callId,
+  slotId,
+  businessId,
+  customerId,
+  callerPhone,
+  payload,
+  workflowType,
+}) {
+  return withTransaction(async (client) => {
+    // 1. Fetch and delete the draft
+    const draftResult = await client.query(
+      `SELECT * FROM draft_engagements WHERE id = $1 FOR UPDATE`,
+      [draftId]
+    );
+    const draft = draftResult.rows[0];
+    if (!draft) throw Object.assign(new Error(`Draft ${draftId} not found`), { statusCode: 404 });
+
+    // 2. Create confirmed engagement
+    const engResult = await client.query(
+      `INSERT INTO engagements
+         (business_id, workflow_id, customer_id, call_id, status, payload)
+       VALUES ($1, $2, $3, $4, 'confirmed', $5)
+       RETURNING *`,
+      [draft.business_id, draft.workflow_id, draft.customer_id, callId, draft.payload]
+    );
+    const engagement = engResult.rows[0];
+
+    // 3. Delete the draft
+    await client.query(`DELETE FROM draft_engagements WHERE id = $1`, [draftId]);
+
+    // 4. Lock slot and increment if reservation/appointment workflow
+    if (slotId && ['reservation', 'appointment'].includes(workflowType)) {
+      const slotResult = await client.query(
+        `UPDATE availability_slots
+         SET booked = booked + 1
+         WHERE id = $1 AND business_id = $2 AND booked < capacity
+         RETURNING id`,
+        [slotId, businessId]
+      );
+      if (!slotResult.rows.length) {
+        throw Object.assign(new Error('Slot is fully booked'), { statusCode: 409 });
+      }
+    }
+
+    // 5. Insert reservation record
+    if (['reservation', 'appointment'].includes(workflowType)) {
+      await client.query(
+        `INSERT INTO reservations
+           (business_id, customer_id, slot_id, engagement_id, caller_phone, guest_name,
+            party_size, reserved_for, notes, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'confirmed')
+         ON CONFLICT DO NOTHING`,
+        [
+          businessId,
+          customerId || null,
+          slotId || null,
+          engagement.id,
+          callerPhone || null,
+          payload.name || payload.guest_name || null,
+          payload.party_size || payload.guests || 1,
+          payload.date_time || payload.reserved_for || null,
+          payload.notes || payload.special_requests || null,
+        ]
+      );
+    }
+
+    return engagement;
+  });
 }

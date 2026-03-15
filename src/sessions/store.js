@@ -19,10 +19,11 @@
  *   callerPhone:   string,
  *   destPhone:     string,
  *   businessId:    string,
- *   business:      object,
- *   locations:     array,
- *   workflows:     array,
- *   aiConfig:      object,
+ *   business:       object,
+ *   locations:      array,
+ *   workflows:      array,
+ *   activeWorkflow: object|null,
+ *   aiConfig:       object,
  *   services:      array,
  *   timezone:      string,
  *   customer:      object|null,
@@ -126,12 +127,16 @@ export async function loadSession(callSid) {
 
 /**
  * Merge updates into an existing session (in-memory + Redis write-through).
+ * Resets the inactivity timer on every update so long calls don't expire mid-flight.
  */
 export function updateSession(callSid, updates) {
   const existing = store.get(callSid);
   if (!existing) return;
 
-  const updated = { ...existing, ...updates };
+  // Reset the timeout so a long active call doesn't expire
+  if (existing._timer) clearTimeout(existing._timer);
+
+  const updated = { ...existing, ...updates, _timer: startTimer(callSid) };
   store.set(callSid, updated);
 
   const { _timer: _t, ...data } = updated;
