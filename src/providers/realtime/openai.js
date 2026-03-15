@@ -168,7 +168,10 @@ export function handleOpenAISession(twilioWs, session) {
             case 'response.function_call_arguments.done': {
               const { name, arguments: rawArgs, call_id } = oaiMsg;
               let args = {};
-              try { args = JSON.parse(rawArgs || '{}'); } catch { /* ignore */ }
+              try { args = JSON.parse(rawArgs || '{}'); } catch (err) {
+                console.error(`[OpenAI] Failed to parse tool arguments for ${name}:`, err.message, rawArgs);
+                break;
+              }
 
               console.log(`[OpenAI] Tool call: ${name}`, args);
 
