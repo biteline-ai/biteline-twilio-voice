@@ -90,7 +90,8 @@ async function openAIComplete({ baseURL, apiKey, model, systemPrompt, messages, 
     if (tc.name && onToolCall) {
       let args = {};
       try { args = JSON.parse(tc.args_str || '{}'); } catch (err) {
-        console.warn(`[LLM] Tool call "${tc.name}" has malformed args:`, err.message, tc.args_str);
+        console.warn(`[LLM] Tool call "${tc.name}" has malformed args — skipping:`, err.message, tc.args_str);
+        continue;
       }
       await onToolCall({ id: tc.id, name: tc.name, args });
     }
@@ -118,17 +119,28 @@ async function anthropicComplete({ apiKey, model, systemPrompt, messages, tools,
     }));
   }
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method:  'POST',
-    headers: {
-      'Content-Type':      'application/json',
-      'x-api-key':         apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify(body),
-  });
+  const MAX_RETRIES = 3;
+  let res;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    res = await fetch('https://api.anthropic.com/v1/messages', {
+      method:  'POST',
+      headers: {
+        'Content-Type':      'application/json',
+        'x-api-key':         apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(body),
+    });
 
-  if (!res.ok) {
+    if (res.ok) break;
+
+    if (res.status === 429 && attempt < MAX_RETRIES - 1) {
+      const delay = Math.pow(2, attempt) * 1000;
+      console.warn(`[LLM] Anthropic 429 — retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+      await new Promise((r) => setTimeout(r, delay));
+      continue;
+    }
+
     const text = await res.text().catch(() => '');
     throw new Error(`Anthropic → ${res.status}: ${text.slice(0, 200)}`);
   }
@@ -175,7 +187,8 @@ async function anthropicComplete({ apiKey, model, systemPrompt, messages, tools,
     if (tb.name && onToolCall) {
       let args = {};
       try { args = JSON.parse(tb.input_str || '{}'); } catch (err) {
-        console.warn(`[LLM] Anthropic tool call "${tb.name}" has malformed input:`, err.message, tb.input_str);
+        console.warn(`[LLM] Anthropic tool call "${tb.name}" has malformed input — skipping:`, err.message, tb.input_str);
+        continue;
       }
       await onToolCall({ id: tb.id, name: tb.name, args });
     }
