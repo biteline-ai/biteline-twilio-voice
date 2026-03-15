@@ -94,7 +94,6 @@ export function createGroqSTT({ apiKey }) {
       chunks.length = 0;
 
       // Groq Whisper accepts audio files — we ship as audio/basic (mulaw 8kHz)
-      const FormData = (await import('node:stream')).default; // use native fetch FormData
       const form = new globalThis.FormData();
       const blob = new Blob([mulaw], { type: 'audio/basic' });
       form.append('file', blob, 'audio.ul');
