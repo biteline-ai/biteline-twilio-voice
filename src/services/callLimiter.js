@@ -93,7 +93,8 @@ export async function releaseCallSlot(businessId) {
       const key    = `biteline:calls:${businessId}`;
       const newVal = await redis.decr(key);
       if (newVal < 0) await redis.set(key, 0);
-      return;
+      // No early return — always also decrement in-memory so the counter stays
+      // correct when the acquire fell back to in-memory during a Redis outage.
     } catch (err) {
       console.error('[CallLimiter] Redis release error:', err.message);
     }
