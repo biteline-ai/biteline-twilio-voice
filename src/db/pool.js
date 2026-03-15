@@ -46,7 +46,9 @@ export async function withTransaction(fn, { retries = 3 } = {}) {
       await client.query('COMMIT');
       return result;
     } catch (err) {
-      await client.query('ROLLBACK');
+      try { await client.query('ROLLBACK'); } catch (rbErr) {
+        console.error('[DB] Rollback failed:', rbErr.message);
+      }
       // Retry on deadlock or serialization failure
       if (attempt < retries && (err.code === '40P01' || err.code === '40001')) {
         console.warn(`[DB] Transaction ${err.code === '40P01' ? 'deadlock' : 'serialization failure'} — retrying (attempt ${attempt}/${retries})`);
