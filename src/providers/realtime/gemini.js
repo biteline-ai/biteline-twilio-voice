@@ -25,6 +25,7 @@ import { generateSystemPrompt } from '../../workflows/prompts.js';
 import { buildTools }           from '../../workflows/tools.js';
 import { dispatch }             from '../../workflows/handler.js';
 import { closeCallRecord }      from '../../services/calls.js';
+import { releaseCallSlot }      from '../../services/callLimiter.js';
 
 const GEMINI_API_KEY = process.env.GOOGLE_API_KEY;
 const GEMINI_WS_BASE = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent';
@@ -50,13 +51,21 @@ export function handleGeminiSession(twilioWs, session) {
   let callStartTime = Date.now();
   let pendingFnId   = null;   // current function call id waiting for output
 
+  let tornDown = false;
   function teardown(status = 'completed') {
-    if (callSid) {
-      const duration = Math.round((Date.now() - callStartTime) / 1000);
+    if (tornDown) return;
+    tornDown = true;
+
+    const duration = Math.round((Date.now() - callStartTime) / 1000);
+    if (session?.callId) {
       closeCallRecord(session.callId, { status, durationSeconds: duration })
         .catch((err) => console.error('[Gemini] closeCallRecord error:', err.message));
-      deleteSession(callSid);
     }
+
+    releaseCallSlot(session?.businessId)
+      .catch((err) => console.error('[Gemini] releaseCallSlot error:', err.message));
+
+    deleteSession(callSid);
     if (geminiWs?.readyState === WebSocket.OPEN) geminiWs.close();
   }
 

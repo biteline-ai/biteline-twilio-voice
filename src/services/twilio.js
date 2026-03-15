@@ -20,6 +20,8 @@ import { setSession }      from '../sessions/store.js';
 import { createCallRecord } from './calls.js';
 import { getCustomer, getDraftForCaller } from './engagements.js';
 import { getActiveMenuData } from './menu.js';
+import { checkBusinessSubscription } from './subscription.js';
+import { acquireCallSlot } from './callLimiter.js';
 
 /**
  * Register Twilio routes on the Fastify instance.
@@ -48,6 +50,20 @@ export function setupTwilioRoutes(fastify) {
 
       const business   = bizResult.rows[0];
       const businessId = business.id;
+
+      // ── 1b. Subscription gate ─────────────────────────────────────────────
+      const subCheck = await checkBusinessSubscription(businessId);
+      if (!subCheck.allowed) {
+        console.warn(`[Twilio] Blocked — subscription ${subCheck.reason} for business ${businessId}`);
+        return reply.type('text/xml').send(subscriptionBlockedTwiML());
+      }
+
+      // ── 1c. Concurrent call limit ─────────────────────────────────────────
+      const slotAcquired = await acquireCallSlot(businessId, subCheck.plan);
+      if (!slotAcquired) {
+        console.warn(`[Twilio] Blocked — concurrent limit reached for business ${businessId} (plan: ${subCheck.plan})`);
+        return reply.type('text/xml').send(callLimitTwiML());
+      }
 
       // ── 2. Load business data in parallel ────────────────────────────────
       const [locResult, workflowResult, aiResult] = await Promise.all([
@@ -137,6 +153,7 @@ export function setupTwilioRoutes(fastify) {
         customer,
         draft,
         pipeline,
+        plan: subCheck.plan,
         startedAt: new Date(),
       });
 
@@ -203,6 +220,26 @@ function fallbackTwiML() {
 <Response>
   <Say voice="Polly.Joanna">
     We're sorry, we're having technical difficulties. Please try again in a moment, or visit our website for more information.
+  </Say>
+  <Hangup/>
+</Response>`;
+}
+
+function subscriptionBlockedTwiML() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">
+    We're sorry, this business's automated phone service is temporarily unavailable. Please call back later or visit the business website for assistance.
+  </Say>
+  <Hangup/>
+</Response>`;
+}
+
+function callLimitTwiML() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">
+    We're experiencing high call volume right now. Please try your call again in a few minutes.
   </Say>
   <Hangup/>
 </Response>`;

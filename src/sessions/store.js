@@ -154,3 +154,11 @@ export function deleteSession(callSid) {
 export function sessionCount() {
   return store.size;
 }
+
+/**
+ * Expose the Redis client for other services (e.g. callLimiter).
+ * Returns null when Redis is not configured.
+ */
+export function getRedis() {
+  return redis;
+}
