@@ -273,7 +273,7 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
         if (!session.aiConfig?.kn_enabled) return 'Knowledge base search is not enabled for this business.';
         const { query: knQuery } = args;
         if (!knQuery?.trim()) return 'Please provide a search query.';
-        const result = await knSearch(session.businessId, knQuery);
+        const result = await knSearch(session.businessId, knQuery, session.aiConfig?.kn_realm_id || null);
         return result;
       }
 
