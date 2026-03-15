@@ -15,6 +15,7 @@
  * graceful "technical difficulties" message.
  */
 
+import twilio              from 'twilio';
 import { query }           from '../db/pool.js';
 import { setSession }      from '../sessions/store.js';
 import { createCallRecord } from './calls.js';
@@ -29,6 +30,24 @@ import { acquireCallSlot, releaseCallSlot } from './callLimiter.js';
 export function setupTwilioRoutes(fastify) {
 
   fastify.all('/incoming-call', async (request, reply) => {
+    // Validate Twilio request signature to prevent forged call injection
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    if (authToken) {
+      const sig       = request.headers['x-twilio-signature'] || '';
+      const publicUrl = process.env.PUBLIC_URL
+        ? process.env.PUBLIC_URL.replace(/\/$/, '') + '/incoming-call'
+        : `${request.protocol}://${request.hostname}/incoming-call`;
+      const valid = twilio.validateRequest(authToken, sig, publicUrl, request.body || {});
+      if (!valid) {
+        console.warn('[Twilio] Invalid signature on /incoming-call — rejecting');
+        return reply.code(403).type('text/xml').send(
+          '<?xml version="1.0" encoding="UTF-8"?><Response><Reject/></Response>'
+        );
+      }
+    } else {
+      console.warn('[Twilio] TWILIO_AUTH_TOKEN not set — skipping signature validation (dev mode)');
+    }
+
     const callerPhone = request.body.From   || request.query.From;
     const destPhone   = request.body.To     || request.query.To;
     const callSid     = request.body.CallSid || request.query.CallSid;
