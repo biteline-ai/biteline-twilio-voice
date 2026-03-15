@@ -77,6 +77,48 @@ fastify.get('/metrics', async () => {
   };
 });
 
+// ── Prometheus text-format metrics ───────────────────────────────────────────
+// Compatible with Prometheus scraping (Content-Type: text/plain; version=0.0.4)
+// Grafana agent, Victoria Metrics, or any OpenMetrics-compatible scraper can
+// consume this endpoint directly.
+fastify.get('/metrics/prometheus', async (_request, reply) => {
+  const mem     = process.memoryUsage();
+  const uptime  = Math.round(process.uptime());
+  const active  = sessionCount();
+
+  const lines = [
+    '# HELP biteline_voice_uptime_seconds Server uptime in seconds',
+    '# TYPE biteline_voice_uptime_seconds gauge',
+    `biteline_voice_uptime_seconds ${uptime}`,
+
+    '# HELP biteline_voice_active_sessions Currently active call sessions',
+    '# TYPE biteline_voice_active_sessions gauge',
+    `biteline_voice_active_sessions ${active}`,
+
+    '# HELP biteline_voice_memory_rss_bytes Resident set size in bytes',
+    '# TYPE biteline_voice_memory_rss_bytes gauge',
+    `biteline_voice_memory_rss_bytes ${mem.rss}`,
+
+    '# HELP biteline_voice_memory_heap_used_bytes V8 heap used in bytes',
+    '# TYPE biteline_voice_memory_heap_used_bytes gauge',
+    `biteline_voice_memory_heap_used_bytes ${mem.heapUsed}`,
+
+    '# HELP biteline_voice_memory_heap_total_bytes V8 heap total in bytes',
+    '# TYPE biteline_voice_memory_heap_total_bytes gauge',
+    `biteline_voice_memory_heap_total_bytes ${mem.heapTotal}`,
+
+    '# HELP biteline_voice_requests_total Total HTTP requests served',
+    '# TYPE biteline_voice_requests_total counter',
+    `biteline_voice_requests_total{status="all"} ${counters.total}`,
+    `biteline_voice_requests_total{status="4xx"} ${counters['4xx']}`,
+    `biteline_voice_requests_total{status="5xx"} ${counters['5xx']}`,
+  ];
+
+  return reply
+    .type('text/plain; version=0.0.4; charset=utf-8')
+    .send(lines.join('\n') + '\n');
+});
+
 setupTwilioRoutes(fastify);
 setupMediaStreamRoute(fastify);
 
