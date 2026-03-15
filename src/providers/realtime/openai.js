@@ -87,7 +87,7 @@ export function handleOpenAISession(twilioWs, session) {
     switch (msg.event) {
 
       case 'start': {
-        streamSid     = msg.start.streamSid;
+        streamSid     = msg.start?.streamSid;
         callStartTime = Date.now();
         console.log(`[OpenAI] Call started: ${callSid}`);
 

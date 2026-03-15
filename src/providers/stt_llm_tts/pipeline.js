@@ -19,6 +19,7 @@
  *   stt_model, llm_model, tts_voice
  */
 
+import WebSocket                     from 'ws';
 import { getSession, deleteSession } from '../../sessions/store.js';
 import { generateSystemPrompt }      from '../../workflows/prompts.js';
 import { buildTools }                from '../../workflows/tools.js';
@@ -114,6 +115,7 @@ export function handleSTTPipeline(twilioWs, session) {
       // Send audio to Twilio in ~20ms chunks (160 bytes @ 8kHz mulaw)
       const CHUNK_SIZE = 160;
       for (let offset = 0; offset < audioBuffer.length; offset += CHUNK_SIZE) {
+        if (twilioWs.readyState !== WebSocket.OPEN) break;
         const chunk = audioBuffer.slice(offset, offset + CHUNK_SIZE);
         twilioWs.send(JSON.stringify({
           event:     'media',
@@ -174,6 +176,7 @@ export function handleSTTPipeline(twilioWs, session) {
     }
 
     if (msg.event === 'media') {
+      if (!msg.media?.payload) return;
       stt.send(msg.media.payload);
       scheduleSilenceFlush();
     }
