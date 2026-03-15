@@ -89,7 +89,9 @@ async function openAIComplete({ baseURL, apiKey, model, systemPrompt, messages, 
   for (const tc of Object.values(toolCalls)) {
     if (tc.name && onToolCall) {
       let args = {};
-      try { args = JSON.parse(tc.args_str || '{}'); } catch {}
+      try { args = JSON.parse(tc.args_str || '{}'); } catch (err) {
+        console.warn(`[LLM] Tool call "${tc.name}" has malformed args:`, err.message, tc.args_str);
+      }
       await onToolCall({ id: tc.id, name: tc.name, args });
     }
   }
@@ -172,7 +174,9 @@ async function anthropicComplete({ apiKey, model, systemPrompt, messages, tools,
   for (const tb of Object.values(toolBlocks)) {
     if (tb.name && onToolCall) {
       let args = {};
-      try { args = JSON.parse(tb.input_str || '{}'); } catch {}
+      try { args = JSON.parse(tb.input_str || '{}'); } catch (err) {
+        console.warn(`[LLM] Anthropic tool call "${tb.name}" has malformed input:`, err.message, tb.input_str);
+      }
       await onToolCall({ id: tb.id, name: tb.name, args });
     }
   }
