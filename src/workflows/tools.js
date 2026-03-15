@@ -221,7 +221,6 @@ const COMMON = [
   tool_save_draft,
   tool_confirm_engagement,
   tool_cancel_engagement,
-  tool_search_knowledge,
 ];
 
 const TOOL_SETS = {
@@ -236,16 +235,22 @@ const TOOL_SETS = {
  *
  * @param {string}  workflowType        - 'ordering' | 'appointment' | 'reservation' | 'quote'
  * @param {object}  [aiConfig={}]       - Business ai_config row
- * @param {boolean} [aiConfig.draft_engagement_enabled] - When false, removes the three draft/confirm/cancel tools
+ * @param {boolean} [aiConfig.draft_engagement_enabled] - When false, removes draft/confirm/cancel tools
+ * @param {boolean} [aiConfig.kn_enabled]               - When true, adds the search_knowledge tool
  * @returns {Array}
  */
 export function buildTools(workflowType, aiConfig = {}) {
-  let tools = TOOL_SETS[workflowType] ?? COMMON;
+  let tools = [...(TOOL_SETS[workflowType] ?? COMMON)];
 
   // Remove draft lifecycle tools when draft_engagement_enabled is explicitly false
   if (aiConfig.draft_engagement_enabled === false) {
     const draftTools = new Set(['save_draft_engagement', 'confirm_engagement', 'cancel_engagement', 'update_draft_order']);
     tools = tools.filter((t) => !draftTools.has(t.name));
+  }
+
+  // Add knowledge search only when KN is enabled for this business
+  if (aiConfig.kn_enabled) {
+    tools.push(tool_search_knowledge);
   }
 
   return tools;

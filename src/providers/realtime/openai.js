@@ -105,8 +105,7 @@ export function handleOpenAISession(twilioWs, session) {
           isConnected = true;
           console.log(`[OpenAI] Connected to Realtime API (${model})`);
 
-          const workflow     = session.workflows?.find((w) => w.is_active) || session.workflows?.[0];
-          const workflowType = workflow?.type || 'ordering';
+          const workflowType = session.activeWorkflow?.type || 'ordering';
 
           const sessionConfig = {
             type:  'session.update',
