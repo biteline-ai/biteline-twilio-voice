@@ -39,10 +39,17 @@ function linearToMulaw(sample) {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function fetchAudio(url, opts) {
-  const res = await fetch(url, opts);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  let res;
+  try {
+    res = await fetch(url, { ...opts, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`TTS ${url} → ${res.status}: ${text.slice(0, 200)}`);
+    throw new Error(`TTS ${res.status}: ${text.slice(0, 200)}`);
   }
   return Buffer.from(await res.arrayBuffer());
 }
