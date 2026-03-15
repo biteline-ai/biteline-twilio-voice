@@ -157,11 +157,13 @@ export function handleGeminiSession(twilioWs, session) {
       // Audio output → relay to Twilio
       if (part.inlineData?.mimeType?.startsWith('audio/') && part.inlineData?.data && streamSid) {
         const audioBase64 = part.inlineData.data;
-        twilioWs.send(JSON.stringify({
-          event: 'media',
-          streamSid,
-          media: { payload: audioBase64 },
-        }));
+        if (twilioWs.readyState === WebSocket.OPEN) {
+          twilioWs.send(JSON.stringify({
+            event: 'media',
+            streamSid,
+            media: { payload: audioBase64 },
+          }));
+        }
       }
 
       // AI text turn (for transcript)
