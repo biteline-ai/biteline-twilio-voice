@@ -189,8 +189,8 @@ export async function dispatch(callSid, toolName, args, { endCallFn } = {}) {
         // If confirmed engagement needs cancellation, update its status
         if (session.engagement?.id) {
           await query(
-            `UPDATE engagements SET status = 'cancelled' WHERE id = $1`,
-            [session.engagement.id]
+            `UPDATE engagements SET status = 'cancelled' WHERE id = $1 AND business_id = $2`,
+            [session.engagement.id, session.businessId]
           );
           return 'Engagement cancelled.';
         }
